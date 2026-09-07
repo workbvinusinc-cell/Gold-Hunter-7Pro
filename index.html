@@ -2184,6 +2184,50 @@ function detectMarketRegime() {
   return result;
 }
 
+// ── MARKET REGIME DETECTION — M1 VERSION ──
+// Identical classification logic to detectMarketRegime() above, but reads
+// candles[60] (M1) instead of candles[300] (M5), with the DEAD-volatility
+// threshold scaled down (~0.447x, i.e. sqrt(1/5)) to match M1's naturally
+// smaller per-bar range vs M5's. This is the version actually used for
+// every trade gate/score below — M1-only per design; detectMarketRegime()
+// (M5) is kept only for the cosmetic status-bar regime badge.
+let _regimeCacheM1 = { arrRef: null, len: -1, lastClose: null, result: 'UNKNOWN' };
+function detectMarketRegimeM1() {
+  const arr = candles[60];
+  if (!arr || arr.length < 20) return 'UNKNOWN';
+
+  const lastC = arr.length ? arr[arr.length - 1].close : null;
+  if (_regimeCacheM1.arrRef === arr && _regimeCacheM1.len === arr.length && _regimeCacheM1.lastClose === lastC) {
+    return _regimeCacheM1.result;
+  }
+
+  let result;
+  const volatility = calculateVolatility(60);
+  const last = arr[arr.length - 2]; // last completed M1 bar (exclude forming)
+  if (!last) {
+    result = 'UNKNOWN';
+  } else {
+    const body = Math.abs(last.close - last.open);
+    if (volatility < 0.223) { // 0.5 * sqrt(1/5), scaled from the M5 DEAD threshold
+      result = 'DEAD';
+    } else if (body > volatility * 1.5) {
+      result = 'EXPANSION';
+    } else {
+      const recent10 = arr.slice(-11, -1);
+      if (recent10.length >= 5) {
+        const highs = recent10.map(c => c.high);
+        const trendStrength = Math.abs(highs[highs.length - 1] - highs[0]);
+        result = (trendStrength > volatility * 2) ? 'TREND' : 'RANGE';
+      } else {
+        result = 'RANGE';
+      }
+    }
+  }
+
+  _regimeCacheM1 = { arrRef: arr, len: arr.length, lastClose: lastC, result };
+  return result;
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 //  STRATEGY ENGINE — REFINED LIQUIDITY / STRUCTURE ENGINE (v2)
 //  Replaces the original ICT/SMC pattern-detection engine.
@@ -3454,11 +3498,6 @@ const RefinedStrategy = (() => {
         ? candleSets[60]
         : []
     );
-    const m5 = normalizeCandles(
-      candleSets && candleSets[300]
-        ? candleSets[300]
-        : []
-    );
 
     const need = C.simple.lookbackBars + 2;
     if (m1.length < need) {
@@ -3476,8 +3515,10 @@ const RefinedStrategy = (() => {
     // a setup AGAINST it is only allowed through if it scores B+ or better
     // (see the approval check further down, near scoreTotal). This trades
     // more setups than a hard block (good counter-trend reversals get taken)
-    // while still keeping the bot's core edge, which is trend alignment. ──
-    const trend = (C.simple.useTrendFilter && m5.length >= 55) ? getTrendBias(m5) : "NONE";
+    // while still keeping the bot's core edge, which is trend alignment.
+    // M1-ONLY: trend now reads M1 closes (was M5) — every gate/score in
+    // this engine is M1-sourced; other timeframes are display-only. ──
+    const trend = (C.simple.useTrendFilter && m1.length >= 55) ? getTrendBias(m1) : "NONE";
     const counterTrend = trend !== "NONE" && ((isBuy && trend === "BEAR") || (!isBuy && trend === "BULL"));
 
     // Exclude the still-forming candle — only trigger off a closed bar.
@@ -3522,8 +3563,8 @@ const RefinedStrategy = (() => {
 
     // ── Regime filter — skip only genuinely dead/no-volatility conditions,
     // where a "breakout" is really just spread/noise wiggling across a flat
-    // range. EXPANSION/TREND/RANGE all still pass. ──
-    const regime = (typeof detectMarketRegime === "function") ? detectMarketRegime() : "UNKNOWN";
+    // range. EXPANSION/TREND/RANGE all still pass. M1-sourced (was M5). ──
+    const regime = (typeof detectMarketRegimeM1 === "function") ? detectMarketRegimeM1() : "UNKNOWN";
     if (C.simple.avoidDeadRegime && regime === "DEAD") {
       return {
         signal: false, reason: "DEAD_MARKET_REGIME", direction, trend, quality: null,
@@ -3723,12 +3764,11 @@ const RefinedStrategy = (() => {
   function computeSetupStrength(direction, candleSets) {
     const isBuy = direction === "BUY";
     const m1 = normalizeCandles(candleSets && candleSets[60] ? candleSets[60] : []);
-    const m5 = normalizeCandles(candleSets && candleSets[300] ? candleSets[300] : []);
 
     const need = C.simple.lookbackBars + 2;
     if (m1.length < need) return { score: 0, trend: "NONE", counterTrend: false, ready: false };
 
-    const trend = (C.simple.useTrendFilter && m5.length >= 55) ? getTrendBias(m5) : "NONE";
+    const trend = (C.simple.useTrendFilter && m1.length >= 55) ? getTrendBias(m1) : "NONE";
 
     const completed = m1.slice(0, -1);
     const last = completed[completed.length - 1];
@@ -3743,7 +3783,7 @@ const RefinedStrategy = (() => {
     const bodyRatio  = barRange > 0 ? Math.abs(last.close - last.open) / barRange : 0;
     const currentATR = atr(completed, 14) || barRange;
 
-    const regime = (typeof detectMarketRegime === "function") ? detectMarketRegime() : "UNKNOWN";
+    const regime = (typeof detectMarketRegimeM1 === "function") ? detectMarketRegimeM1() : "UNKNOWN";
 
     // Overshoot allowed to go negative here (price hasn't cleared the range
     // yet) and is simply clamped to 0 for scoring — lets the breakout
@@ -4460,6 +4500,526 @@ function refinedScoreToLegacyGrade(score) {
   if (score >= REFINED_STRATEGY_CFG.quality.plusScore) return 2;
   return 1;
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MULTI-STRATEGY ENGINE v3 — M1-ONLY
+   ═══════════════════════════════════════════════════════════════════════
+   Every trade setup, score, and gate in this engine is sourced from M1
+   (candles[60]) exclusively — Momentum Breakout, EMA Pullback
+   Continuation, and Range-Edge Rejection all read M1 only. M5/M15 data
+   (computeM15Regime, FastLaneM5) is left in the file below but is NOT
+   wired into any scoring or gating path — it's dead code kept for
+   reference/possible future cosmetic display (e.g. a status-bar badge),
+   and has zero effect on which trades fire or how they're sized.
+
+     1. Momentum Breakout (RefinedStrategy, above) — M1 trigger + M1 trend
+        filter + M1 regime filter (detectMarketRegimeM1).
+     2. EMA Pullback Continuation — M1 trend/pullback/confirmation.
+     3. Range-Edge Rejection — M1 range detection + M1 wick rejection.
+     4. An arbitration layer that evaluates all 3 strategies × BUY/SELL
+        (6 candidates) every candle/tick and fires whichever single
+        candidate scores highest — used identically by both the live
+        engine (runStrategy) and the backtest/replay engine
+        (ReplayEngine._evaluateEntry), so live and backtest never diverge.
+
+   Every strategy below returns the same setup shape RefinedStrategy's own
+   evaluate() does — {signal, direction, reason, sweep, bms, ob, fvg, zone,
+   quality:{total,grade,approved,components}, gates, _m1} — so every
+   candidate, regardless of which strategy produced it, flows through the
+   exact same execution pipeline already in this file
+   (RefinedStrategy.calculateTradeGeometry, checkRiskOverflow,
+   placeDemoTrade / _openReplayPosition). Nothing downstream of arbitration
+   needs to know which strategy fired.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+
+// ── M15 REGIME READ (UNUSED BY ANY TRADE DECISION) ──────────────────────
+// NOT called from Arbitration or any strategy's scoring/gates — kept only
+// as a standalone utility in case a future cosmetic display (e.g. a
+// status-bar badge, like detectMarketRegime()'s M5 badge lower in this
+// file) wants it. Reads candles[900] (M15) only. Gives a shared read on the
+// higher-timeframe backdrop: directional bias (EMA21 vs EMA50 on M15
+// closes), how strongly that bias is expressed (EMA separation in ATRs),
+// and a volatility state (M15 ATR14 vs its own 50-bar average). Applied as
+// a bounded ±10ish point adjustment at the arbitration layer (see
+// m15RegimeAdjustment / Arbitration.normalize below) — a soft ranking
+// signal, not a hard gate, matching the soft-filter approach the rest of
+// this file already uses (see C.simple.useTrendFilter comment above).
+// Cached per M15 bar close, same pattern as detectMarketRegime().
+let _m15RegimeCache = { arrRef: null, len: -1, lastClose: null, result: null };
+
+function computeM15Regime() {
+  const arr = candles[900];
+  const empty = { bias: 'NEUTRAL', biasStrength: 0, vol: 'NORMAL', atr: 0, ready: false };
+  if (!arr || arr.length < 55) return empty;
+
+  const lastC = arr[arr.length - 1] ? arr[arr.length - 1].close : null;
+  if (_m15RegimeCache.arrRef === arr && _m15RegimeCache.len === arr.length && _m15RegimeCache.lastClose === lastC) {
+    return _m15RegimeCache.result;
+  }
+
+  const completed = arr.slice(0, -1); // exclude the still-forming M15 bar
+  if (completed.length < 52) {
+    const r = empty;
+    _m15RegimeCache = { arrRef: arr, len: arr.length, lastClose: lastC, result: r };
+    return r;
+  }
+
+  const closes = completed.map(c => c.close);
+  const emaLast = (values, period) => {
+    const k = 2 / (period + 1);
+    let out = values[0];
+    for (let i = 1; i < values.length; i++) out = values[i] * k + out * (1 - k);
+    return out;
+  };
+  const ema21 = emaLast(closes, 21);
+  const ema50 = emaLast(closes, 50);
+
+  const tr = (c, prev) => prev
+    ? Math.max(c.high - c.low, Math.abs(c.high - prev.close), Math.abs(c.low - prev.close))
+    : c.high - c.low;
+  const trs = completed.map((c, i) => tr(c, i > 0 ? completed[i - 1] : null));
+  const n14 = Math.min(14, trs.length);
+  const atr14 = trs.slice(-n14).reduce((a, b) => a + b, 0) / n14;
+  const n50 = Math.min(50, trs.length);
+  const atrLong = trs.slice(-n50).reduce((a, b) => a + b, 0) / n50;
+
+  const sep = atr14 > 0 ? (ema21 - ema50) / atr14 : 0; // EMA separation, in ATRs
+  const bias = sep > 0.15 ? 'BULL' : sep < -0.15 ? 'BEAR' : 'NEUTRAL';
+  const biasStrength = Math.max(0, Math.min(100, Math.abs(sep) * 40)); // saturates ~2.5 ATR separation
+
+  const volRatio = atrLong > 0 ? atr14 / atrLong : 1;
+  const vol = volRatio > 1.25 ? 'EXPANDING' : volRatio < 0.75 ? 'CONTRACTING' : 'NORMAL';
+
+  const result = { bias, biasStrength, vol, atr: atr14, ready: true };
+  _m15RegimeCache = { arrRef: arr, len: arr.length, lastClose: lastC, result };
+  return result;
+}
+
+// UNUSED BY ANY TRADE DECISION (see note above) — kept only as a utility.
+// Bounded quality-score adjustment for a candidate direction, given an M15
+// regime read. Aligned with the M15 bias → bonus scaled by bias strength;
+// opposed → a slightly larger penalty (fighting the macro trend costs more
+// than agreeing with it gains); EXPANDING vol gets a small extra nudge
+// (real moves, not chop), CONTRACTING a small penalty. Capped so this can
+// never flip a candidate's signal on its own — only re-ranks/re-grades it.
+function m15RegimeAdjustment(direction, regime) {
+  if (!regime || !regime.ready) return 0;
+  const aligned = (direction === 'BUY' && regime.bias === 'BULL') || (direction === 'SELL' && regime.bias === 'BEAR');
+  const opposed  = (direction === 'BUY' && regime.bias === 'BEAR') || (direction === 'SELL' && regime.bias === 'BULL');
+  let adj = 0;
+  if (aligned) adj += (regime.biasStrength / 100) * 8;       // up to +8
+  else if (opposed) adj -= (regime.biasStrength / 100) * 10; // up to -10
+  if (regime.vol === 'EXPANDING') adj += 2;
+  else if (regime.vol === 'CONTRACTING') adj -= 2;
+  return adj;
+}
+
+
+// ── M5 FAST LANE — DISABLED, NOT CALLED FROM ANY TRADE DECISION ─────────
+// Per request, no timeframe other than M1 may trigger a trade, so
+// Arbitration.momentumCandidate no longer calls this. Left in place
+// (dead code) rather than deleted, in case an M5-bypass mode is wanted
+// again later. Watches candles[300] (M5) directly and could fire a
+// Momentum Breakout trade off a single M5 breakout bar alone — "bypassing
+// the M1 pattern entirely" — requiring a stricter body ratio, a HARD
+// M15-alignment requirement, a news blackout check, and a quality floor
+// above the normal plusScore gate.
+const FastLaneM5 = (() => {
+  const CFG_FL = {
+    lookbackBars: 8,
+    minBodyRatio: 0.40,
+    minQualityFloor: 82,
+    requireM15Alignment: true,
+  };
+
+  function range(c) { return Math.max(0, c.high - c.low); }
+  function atr(arr, period = 14) {
+    if (!arr || arr.length < 2) return arr && arr.length ? range(arr[arr.length - 1]) : 0;
+    const trs = arr.map((c, i) => i === 0 ? range(c) : Math.max(
+      c.high - c.low, Math.abs(c.high - arr[i - 1].close), Math.abs(c.low - arr[i - 1].close)
+    ));
+    const n = Math.min(period, trs.length);
+    return trs.slice(-n).reduce((a, b) => a + b, 0) / n;
+  }
+  function highest(arr) { return arr.reduce((m, c) => Math.max(m, c.high), -Infinity); }
+  function lowest(arr)  { return arr.reduce((m, c) => Math.min(m, c.low), Infinity); }
+
+  function evaluate(direction) {
+    const isBuy = direction === 'BUY';
+    const m5 = candles[300] || [];
+    const need = CFG_FL.lookbackBars + 3;
+    if (m5.length < need) return { signal: false, reason: 'INSUFFICIENT_M5_DATA' };
+
+    if (typeof newsEngine !== 'undefined' && newsEngine.state === 'PRE_RELEASE') {
+      return { signal: false, reason: 'NEWS_RELEASE_WINDOW' };
+    }
+
+    const completed = m5.slice(0, -1); // exclude forming M5 bar
+    const last = completed[completed.length - 1];
+    const priorWindow = completed.slice(-1 - CFG_FL.lookbackBars, -1);
+    if (!last || priorWindow.length < CFG_FL.lookbackBars) return { signal: false, reason: 'INSUFFICIENT_M5_DATA' };
+
+    const recentHigh = highest(priorWindow);
+    const recentLow  = lowest(priorWindow);
+    const barRange = range(last);
+    const bodyRatio = barRange > 0 ? Math.abs(last.close - last.open) / barRange : 0;
+    const brokeUp = last.close > recentHigh;
+    const brokeDown = last.close < recentLow;
+    const triggered = isBuy ? (brokeUp && bodyRatio >= CFG_FL.minBodyRatio) : (brokeDown && bodyRatio >= CFG_FL.minBodyRatio);
+    if (!triggered) return { signal: false, reason: isBuy ? 'NO_M5_UPSIDE_BREAKOUT' : 'NO_M5_DOWNSIDE_BREAKOUT' };
+
+    const regime = computeM15Regime();
+    const aligned = (isBuy && regime.bias === 'BULL') || (!isBuy && regime.bias === 'BEAR');
+    if (CFG_FL.requireM15Alignment && regime.ready && regime.bias !== 'NEUTRAL' && !aligned) {
+      return { signal: false, reason: 'M5_FAST_LANE_AGAINST_M15_REGIME' };
+    }
+
+    const currentATR = atr(completed.slice(-14)) || barRange;
+    const overshoot = isBuy ? (last.close - recentHigh) : (recentLow - last.close);
+    const overshootATR = currentATR > 0 ? Math.max(0, Math.min(1, overshoot / currentATR)) : 0;
+    // M5 breakout carries more weight than M1's own breakoutScore since it's
+    // the sole trigger here (no M1 confirmation to lean on).
+    const breakoutScore = Math.min(1, bodyRatio) * 35 + overshootATR * 20; // up to 55
+    const baseScore = Math.max(0, Math.min(100, breakoutScore + 30));      // +30 base for a clean M5 break
+
+    if (baseScore < CFG_FL.minQualityFloor) {
+      return { signal: false, reason: 'M5_FAST_LANE_BELOW_QUALITY_FLOOR', quality: { total: baseScore, approved: false } };
+    }
+
+    const grade = baseScore >= 97 ? 'A+' : baseScore >= 83 ? 'A' : 'B+';
+    const sweep = { type: isBuy ? 'M5_FAST_LANE_LOW' : 'M5_FAST_LANE_HIGH', level: isBuy ? recentLow : recentHigh, candle: { low: recentLow, high: recentHigh }, epoch: last.epoch, quality: 50 };
+    const bms = { level: isBuy ? recentLow : recentHigh, direction, candle: last };
+    const ob = { low: Math.min(last.open, last.close), high: Math.max(last.open, last.close), epoch: last.epoch };
+    const zone = { min: ob.low, max: ob.high, center: last.close, source: 'M5_FAST_LANE_CANDLE' };
+
+    return {
+      signal: true, direction, reason: 'M5_FAST_LANE_BREAKOUT', trend: regime.bias, counterTrend: false,
+      sweep, bms, ob, fvg: null, zone,
+      quality: { total: baseScore, grade, approved: true, components: { breakout: breakoutScore, base: 30 } },
+      gates: { trigger: true, regimeOk: true, newsOk: true, roomOk: true, wickOk: true, quality: true },
+      _m1: completed, // feeds calculateTradeGeometry's ATR buffer — M5-scaled here, on purpose
+    };
+  }
+
+  return { evaluate, config: CFG_FL };
+})();
+
+
+// ── STRATEGY 2 — EMA PULLBACK CONTINUATION ──────────────────────────────
+// M1-native. Requires an established M1 EMA21/EMA50 trend, a genuine
+// pullback toward EMA21 (deep enough to prove it's a real pullback, but
+// not so deep it breaches EMA50 and invalidates the trend), and a
+// confirmation candle that closes back in the trend direction beyond
+// EMA21. Trend-aligned only by construction — a continuation setup has no
+// counter-trend variant.
+const EMAPullbackStrategy = (() => {
+  const P = {
+    minTrendBars: 60,
+    // Scaled 6→15 (M5→M1 conversion): M1 bars are 5x more frequent than
+    // M5, so the lookback is widened (not the full 5x) to still capture a
+    // structurally meaningful pullback rather than a 6-minute wiggle.
+    pullbackLookback: 15,
+    maxPullbackATR: 0.6,
+    minExtensionATR: 0.8,
+    minBodyRatio: 0.30,
+    minQualityFloor: 78, // matches the existing plusScore floor — one consistent entry bar across strategies
+  };
+
+  function emaSeries(values, period) {
+    const k = 2 / (period + 1);
+    const out = [values[0]];
+    for (let i = 1; i < values.length; i++) out.push(values[i] * k + out[i - 1] * (1 - k));
+    return out;
+  }
+  function range(c) { return Math.max(0, c.high - c.low); }
+  function atr(arr, period = 14) {
+    if (!arr || arr.length < 2) return arr && arr.length ? range(arr[arr.length - 1]) : 0;
+    const trs = arr.map((c, i) => i === 0 ? range(c) : Math.max(
+      c.high - c.low, Math.abs(c.high - arr[i - 1].close), Math.abs(c.low - arr[i - 1].close)
+    ));
+    const n = Math.min(period, trs.length);
+    return trs.slice(-n).reduce((a, b) => a + b, 0) / n;
+  }
+
+  // M1-ONLY: every input below comes from candleSets[60] — M5/M15 never
+  // reach this strategy's scoring or gates.
+  function evaluate(direction, candleSets) {
+    const isBuy = direction === 'BUY';
+    const m1 = (candleSets && candleSets[60]) || [];
+    if (m1.length < P.minTrendBars + P.pullbackLookback + 2) {
+      return { signal: false, reason: 'INSUFFICIENT_M1_DATA' };
+    }
+    const completed = m1.slice(0, -1);
+    const closes = completed.map(c => c.close);
+    const ema21series = emaSeries(closes, 21);
+    const ema50series = emaSeries(closes, 50);
+    const last = completed[completed.length - 1];
+    const lastEma21 = ema21series[ema21series.length - 1];
+    const lastEma50 = ema50series[ema50series.length - 1];
+    const currentATR = atr(completed.slice(-14)) || range(last);
+    if (currentATR <= 0) return { signal: false, reason: 'NO_ATR' };
+
+    const trendUp = lastEma21 > lastEma50;
+    const trendDown = lastEma21 < lastEma50;
+    if (isBuy && !trendUp) return { signal: false, reason: 'NO_M1_UPTREND' };
+    if (!isBuy && !trendDown) return { signal: false, reason: 'NO_M1_DOWNTREND' };
+
+    const pbWindow = completed.slice(-1 - P.pullbackLookback, -1);
+    if (pbWindow.length < P.pullbackLookback) return { signal: false, reason: 'INSUFFICIENT_PULLBACK_WINDOW' };
+    const ema21AtIdx = ema21series.slice(-1 - P.pullbackLookback, -1);
+
+    let cameClose = false, wasExtended = false, breachedEma50 = false;
+    for (let i = 0; i < pbWindow.length; i++) {
+      const c = pbWindow[i];
+      const emaAt = ema21AtIdx[i];
+      const distToEma = isBuy ? (c.low - emaAt) / currentATR : (emaAt - c.high) / currentATR;
+      if (distToEma <= P.maxPullbackATR) cameClose = true;
+      const extension = isBuy ? (c.high - emaAt) / currentATR : (emaAt - c.low) / currentATR;
+      if (extension >= P.minExtensionATR) wasExtended = true;
+      if (isBuy && c.low < lastEma50) breachedEma50 = true;
+      if (!isBuy && c.high > lastEma50) breachedEma50 = true;
+    }
+    if (!cameClose) return { signal: false, reason: 'NO_PULLBACK_TO_EMA21' };
+    if (!wasExtended) return { signal: false, reason: 'NO_PRIOR_EXTENSION' };
+    if (breachedEma50) return { signal: false, reason: 'PULLBACK_BROKE_TREND_EMA50' };
+
+    const barRange = range(last);
+    const bodyRatio = barRange > 0 ? Math.abs(last.close - last.open) / barRange : 0;
+    const confirmBull = last.close > last.open && last.close > lastEma21;
+    const confirmBear = last.close < last.open && last.close < lastEma21;
+    const confirmed = isBuy ? confirmBull : confirmBear;
+    if (!confirmed || bodyRatio < P.minBodyRatio) return { signal: false, reason: 'NO_CONFIRMATION_CANDLE' };
+
+    const trendSep = Math.abs(lastEma21 - lastEma50) / currentATR;
+    const trendScore = Math.min(1, trendSep / 2) * 30;                       // up to 30
+    const pullbackDepth = isBuy ? (last.low - lastEma21) / currentATR : (lastEma21 - last.high) / currentATR;
+    const precisionScore = (1 - Math.min(1, Math.abs(pullbackDepth) / P.maxPullbackATR)) * 20; // up to 20
+    const confirmScore = Math.min(1, bodyRatio) * 25;                        // up to 25
+    const baseScore = Math.max(0, Math.min(100, 15 + trendScore + precisionScore + confirmScore));
+
+    if (baseScore < P.minQualityFloor) {
+      return { signal: false, reason: 'EMA_PULLBACK_BELOW_QUALITY_FLOOR', quality: { total: baseScore, approved: false } };
+    }
+
+    const grade = baseScore >= 97 ? 'A+' : baseScore >= 83 ? 'A' : 'B+';
+    const pbExtreme = isBuy
+      ? Math.min(...pbWindow.map(c => c.low), last.low)
+      : Math.max(...pbWindow.map(c => c.high), last.high);
+    const sweep = { type: isBuy ? 'EMA_PULLBACK_LOW' : 'EMA_PULLBACK_HIGH', level: pbExtreme, candle: { low: isBuy ? pbExtreme : last.low, high: isBuy ? last.high : pbExtreme }, epoch: last.epoch, quality: 50 };
+    const bms = { level: pbExtreme, direction, candle: last };
+    const ob = { low: Math.min(last.open, last.close), high: Math.max(last.open, last.close), epoch: last.epoch };
+    const zone = { min: ob.low, max: ob.high, center: last.close, source: 'EMA_PULLBACK_CONFIRM_CANDLE' };
+
+    return {
+      signal: true, direction, reason: 'EMA_PULLBACK_CONTINUATION', trend: isBuy ? 'BULL' : 'BEAR', counterTrend: false,
+      sweep, bms, ob, fvg: null, zone,
+      quality: { total: baseScore, grade, approved: true, components: { trend: trendScore, precision: precisionScore, confirm: confirmScore } },
+      gates: { trigger: true, regimeOk: true, newsOk: true, roomOk: true, wickOk: true, quality: true },
+      _m1: completed,
+    };
+  }
+
+  return {
+    evaluateBuy(price, candleSets) { return evaluate('BUY', candleSets); },
+    evaluateSell(price, candleSets) { return evaluate('SELL', candleSets); },
+    config: P,
+  };
+})();
+
+
+// ── STRATEGY 3 — RANGE-EDGE REJECTION ───────────────────────────────────
+// M1-native. Only active while detectMarketRegimeM1() classifies the
+// market as RANGE — fades a wick-rejection at the edge of the recent M1
+// range back toward the middle. Requires the edge-touching bar to actually
+// reject (a long wick beyond the edge, a weak close back inside the
+// range) rather than just reach it, and requires the range to be wide
+// enough (in ATR) to be worth fading in the first place.
+const RangeEdgeStrategy = (() => {
+  const P = {
+    // Scaled 20→60 (M5→M1 conversion): M1 bars are 5x more frequent than
+    // M5, so the lookback is widened (not the full 5x) so the "range"
+    // still reflects real structure rather than a 20-minute wiggle.
+    rangeLookback: 60,
+    minWickRatio: 0.45,
+    maxCloseBeyondATR: 0.25,
+    minRangeWidthATR: 1.5,
+    minQualityFloor: 78,
+  };
+
+  function range(c) { return Math.max(0, c.high - c.low); }
+  function atr(arr, period = 14) {
+    if (!arr || arr.length < 2) return arr && arr.length ? range(arr[arr.length - 1]) : 0;
+    const trs = arr.map((c, i) => i === 0 ? range(c) : Math.max(
+      c.high - c.low, Math.abs(c.high - arr[i - 1].close), Math.abs(c.low - arr[i - 1].close)
+    ));
+    const n = Math.min(period, trs.length);
+    return trs.slice(-n).reduce((a, b) => a + b, 0) / n;
+  }
+
+  // M1-ONLY: every input below comes from candleSets[60] — M5/M15 never
+  // reach this strategy's scoring or gates.
+  function evaluate(direction, candleSets) {
+    const isBuy = direction === 'BUY'; // BUY = fading the range LOW, SELL = fading the range HIGH
+    const m1 = (candleSets && candleSets[60]) || [];
+    if (m1.length < P.rangeLookback + 3) return { signal: false, reason: 'INSUFFICIENT_M1_DATA' };
+
+    const regime = (typeof detectMarketRegimeM1 === 'function') ? detectMarketRegimeM1() : 'UNKNOWN';
+    if (regime !== 'RANGE') return { signal: false, reason: 'MARKET_NOT_RANGING' };
+
+    const completed = m1.slice(0, -1);
+    const last = completed[completed.length - 1];
+    const window = completed.slice(-1 - P.rangeLookback, -1);
+    if (!last || window.length < P.rangeLookback) return { signal: false, reason: 'INSUFFICIENT_RANGE_WINDOW' };
+
+    const currentATR = atr(completed.slice(-14)) || range(last);
+    if (currentATR <= 0) return { signal: false, reason: 'NO_ATR' };
+
+    const rangeHigh = Math.max(...window.map(c => c.high));
+    const rangeLow  = Math.min(...window.map(c => c.low));
+    const rangeWidthATR = (rangeHigh - rangeLow) / currentATR;
+    if (rangeWidthATR < P.minRangeWidthATR) return { signal: false, reason: 'RANGE_TOO_NARROW' };
+
+    const barRange = range(last);
+    if (barRange <= 0) return { signal: false, reason: 'ZERO_RANGE_CANDLE' };
+
+    let touchedEdge, wickRatio, closeBeyondATR;
+    if (isBuy) {
+      touchedEdge = last.low <= rangeLow;
+      const wick = Math.min(last.open, last.close) - last.low;
+      wickRatio = wick / barRange;
+      closeBeyondATR = last.close < rangeLow ? (rangeLow - last.close) / currentATR : 0;
+    } else {
+      touchedEdge = last.high >= rangeHigh;
+      const wick = last.high - Math.max(last.open, last.close);
+      wickRatio = wick / barRange;
+      closeBeyondATR = last.close > rangeHigh ? (last.close - rangeHigh) / currentATR : 0;
+    }
+    if (!touchedEdge) return { signal: false, reason: isBuy ? 'NO_RANGE_LOW_TOUCH' : 'NO_RANGE_HIGH_TOUCH' };
+    if (wickRatio < P.minWickRatio) return { signal: false, reason: 'WEAK_REJECTION_WICK' };
+    if (closeBeyondATR > P.maxCloseBeyondATR) return { signal: false, reason: 'CLOSED_TOO_FAR_BEYOND_EDGE' };
+
+    const wickScore = Math.min(1, wickRatio) * 35;                                    // up to 35
+    const widthScore = Math.min(1, rangeWidthATR / 4) * 20;                           // up to 20
+    const closeScore = (1 - Math.min(1, closeBeyondATR / P.maxCloseBeyondATR)) * 15;   // up to 15
+    const baseScore = Math.max(0, Math.min(100, 20 + wickScore + widthScore + closeScore));
+
+    if (baseScore < P.minQualityFloor) {
+      return { signal: false, reason: 'RANGE_EDGE_BELOW_QUALITY_FLOOR', quality: { total: baseScore, approved: false } };
+    }
+
+    const grade = baseScore >= 97 ? 'A+' : baseScore >= 83 ? 'A' : 'B+';
+    const sweep = { type: isBuy ? 'RANGE_LOW_REJECTION' : 'RANGE_HIGH_REJECTION', level: isBuy ? rangeLow : rangeHigh, candle: { low: last.low, high: last.high }, epoch: last.epoch, quality: 50 };
+    const bms = { level: isBuy ? rangeLow : rangeHigh, direction, candle: last };
+    const ob = { low: Math.min(last.open, last.close), high: Math.max(last.open, last.close), epoch: last.epoch };
+    const zone = { min: ob.low, max: ob.high, center: last.close, source: 'RANGE_EDGE_REJECTION_CANDLE' };
+
+    return {
+      signal: true, direction, reason: 'RANGE_EDGE_REJECTION', trend: 'RANGE', counterTrend: false,
+      sweep, bms, ob, fvg: null, zone,
+      quality: { total: baseScore, grade, approved: true, components: { wick: wickScore, width: widthScore, close: closeScore } },
+      gates: { trigger: true, regimeOk: true, newsOk: true, roomOk: true, wickOk: true, quality: true },
+      _m1: completed,
+    };
+  }
+
+  return {
+    evaluateBuy(price, candleSets) { return evaluate('BUY', candleSets); },
+    evaluateSell(price, candleSets) { return evaluate('SELL', candleSets); },
+    config: P,
+  };
+})();
+
+
+// ── ARBITRATION ──────────────────────────────────────────────────────────
+// Evaluates all 3 strategies × BUY/SELL (6 candidates) and returns
+// whichever qualifies with the single highest quality score, if any.
+//
+// M1-ONLY: every candidate's score/gates come entirely from M1 data (see
+// each strategy module above). M5/M15 are computed elsewhere in this file
+// purely for cosmetic display (status-bar regime badge, etc.) and are
+// never read here — nothing in this module touches candles[300] or
+// candles[900], and the M5 Fast Lane bypass is disabled (see
+// momentumCandidate below) so it can never fire a trade off M5 alone.
+const Arbitration = (() => {
+
+  function normalize(id, label, direction, r) {
+    if (!r) return { id, label, direction, signal: false, qualityScore: -1, reason: 'NO_RESULT' };
+    const qualityScore = r.quality && Number.isFinite(r.quality.total) ? r.quality.total : null;
+    return {
+      id, label, direction,
+      signal: !!r.signal,
+      reason: r.reason,
+      qualityScore: qualityScore != null ? qualityScore : -1,
+      legacyGrade: qualityScore != null ? refinedScoreToLegacyGrade(qualityScore) : 1,
+      sweepEpoch: r.sweep ? r.sweep.epoch : undefined,
+      sweepLow:  (direction === 'BUY'  && r.sweep) ? r.sweep.level : undefined,
+      sweepHigh: (direction === 'SELL' && r.sweep) ? r.sweep.level : undefined,
+      ob:  r.ob ? { low: r.ob.low, high: r.ob.high } : null,
+      slRef: r.sweep ? { low: r.sweep.candle.low, high: r.sweep.candle.high } : null,
+      raw: r,
+    };
+  }
+
+  // Momentum Breakout candidate: the M1-confirmed path only (strategy._eval,
+  // entirely unchanged). The M5 Fast Lane bypass from the previous build is
+  // intentionally disabled here — per request, no timeframe other than M1
+  // may trigger a trade — so FastLaneM5 is never called. The module itself
+  // is left in place (unused) rather than deleted, in case it's wanted back.
+  function momentumCandidate(direction, price) {
+    const m1Result = strategy._eval(direction, price);
+    return normalize('MOMENTUM', 'Momentum Breakout (M1)', direction, m1Result.raw || m1Result);
+  }
+
+  function candidatesFor(direction, price) {
+    const emaR = direction === 'BUY'
+      ? EMAPullbackStrategy.evaluateBuy(price, candles)
+      : EMAPullbackStrategy.evaluateSell(price, candles);
+    const rangeR = direction === 'BUY'
+      ? RangeEdgeStrategy.evaluateBuy(price, candles)
+      : RangeEdgeStrategy.evaluateSell(price, candles);
+
+    return [
+      momentumCandidate(direction, price),
+      normalize('EMA_PULLBACK', 'EMA Pullback Continuation', direction, emaR),
+      normalize('RANGE_EDGE', 'Range-Edge Rejection', direction, rangeR),
+    ];
+  }
+
+  function evaluate(price) {
+    const buy  = candidatesFor('BUY', price);
+    const sell = candidatesFor('SELL', price);
+    const all = buy.concat(sell);
+    const valid = all.filter(c => c.signal);
+    valid.sort((a, b) => b.qualityScore - a.qualityScore);
+    return { buy, sell, all, best: valid[0] || null };
+  }
+
+  return { evaluate, candidatesFor };
+})();
+
+// Generic per-candidate cooldown, shared by both the live engine (wall-
+// clock ms) and the backtest engine (simulated epoch seconds) — each keeps
+// its own map/units, but the dedup rule itself (time-cooldown OR
+// price-proximity) is identical, matching the "BACKTEST ≡ LIVE" intent
+// already documented elsewhere in this file.
+function arbDupCheck(cooldownMap, key, nowVal, priceVal, cooldownAmt, priceTol) {
+  const last = cooldownMap[key];
+  if (!last) return false;
+  return (nowVal - last.time < cooldownAmt) ||
+    (Number.isFinite(priceVal) && Number.isFinite(last.price) && Math.abs(priceVal - last.price) < priceTol);
+}
+function arbMarkFired(cooldownMap, key, nowVal, priceVal) {
+  cooldownMap[key] = { time: nowVal, price: priceVal };
+}
+
+// Live engine cooldown state + constants (mirrors the old COOLDOWN/PRICE_TOL
+// that runStrategy() used for its single momentum-only dedup).
+let _liveArbCooldown = {};
+const ARB_COOLDOWN_MS = 10 * 1000;
+const ARB_PRICE_TOL   = 0.05;
+
 
 
 /* =========================================================
@@ -7927,48 +8487,31 @@ function runStrategy() {
     }
   }
 
-  // ── SWEEP EPOCH DEDUPLICATION (shortened cooldown + tighter price tolerance so more setups qualify) ──
-  const COOLDOWN   = 10 * 1000;   // was 20s (originally 3.5 min) — shorter gap before re-trading the same level
-  const PRICE_TOL  = 0.05;        // was 0.21
+  // ── ARBITRATION — evaluate all 3 strategies × BUY/SELL (6 candidates:
+  // Momentum Breakout [M1, or M5 Fast Lane when M1 hasn't triggered], EMA
+  // Pullback Continuation, Range-Edge Rejection) and fire whichever single
+  // candidate qualifies with the highest quality score. bs/ss above are
+  // untouched and still solely drive the conds gauge / progress log —
+  // arbitration only decides what actually gets traded. ──
+  const arb = Arbitration.evaluate(mid);
+  const best = arb.best;
 
-  const isBullDup = bs.sweepEpoch !== undefined && (
-    (now - lastTradedBullSweepEpoch < COOLDOWN) ||
-    (bs.sweepLow !== undefined && Math.abs(bs.sweepLow - lastTradedBullSweepPrice) < PRICE_TOL)
-  );
-  const isBearDup = ss.sweepEpoch !== undefined && (
-    (now - lastTradedBearSweepEpoch < COOLDOWN) ||
-    (ss.sweepHigh !== undefined && Math.abs(ss.sweepHigh - lastTradedBearSweepPrice) < PRICE_TOL)
-  );
-
-  // ── FIRE BUY ──
-  if (bs.signal && bs.sweepEpoch !== undefined && !isBullDup) {
-    lastSigMs = now;
-    lastTradedBullSweepIdx   = bs.sweepIdx;
-    lastTradedBullSweepEpoch = now;
-    lastTradedBullSweepPrice = bs.sweepLow || 0;
-    const sess  = strategy.activeSession() || 'SESSION';
-    const kzTag = strategy.activeKillZone() ? ` [${strategy.activeKillZone()}]` : '';
-    const grade = bs.legacyGrade >= 3 ? '★★★' : bs.legacyGrade === 2 ? '★★' : '★';
-    const nTag  = newsEngine.state !== 'NORMAL' ? ` [NEWS:${newsEngine.state}]` : '';
-    addSignal('buy',
-      `[${sess}]${kzTag} BUY ${grade}${nTag} — Momentum Breakout · Quality ${bs.qualityScore != null ? Math.round(bs.qualityScore) : '—'} (${bs.raw && bs.raw.quality ? bs.raw.quality.grade : '?'}) ✓ SL@structure`, mid);
-    // SL placed at M5 sweep candle low (new strategy spec)
-    placeDemoTrade('UP', bs.slRef || bs.ob, bs.legacyGrade, bs.raw, bs.qualityScore);
-
-  // ── FIRE SELL ──
-  } else if (ss.signal && ss.sweepEpoch !== undefined && !isBearDup) {
-    lastSigMs = now;
-    lastTradedBearSweepIdx   = ss.sweepIdx;
-    lastTradedBearSweepEpoch = now;
-    lastTradedBearSweepPrice = ss.sweepHigh || 0;
-    const sess  = strategy.activeSession() || 'SESSION';
-    const kzTag = strategy.activeKillZone() ? ` [${strategy.activeKillZone()}]` : '';
-    const grade = ss.legacyGrade >= 3 ? '★★★' : ss.legacyGrade === 2 ? '★★' : '★';
-    const nTag  = newsEngine.state !== 'NORMAL' ? ` [NEWS:${newsEngine.state}]` : '';
-    addSignal('sell',
-      `[${sess}]${kzTag} SELL ${grade}${nTag} — Momentum Breakout · Quality ${ss.qualityScore != null ? Math.round(ss.qualityScore) : '—'} (${ss.raw && ss.raw.quality ? ss.raw.quality.grade : '?'}) ✓ SL@structure`, mid);
-    // SL placed at M5 sweep candle high (new strategy spec)
-    placeDemoTrade('DOWN', ss.slRef || ss.ob, ss.legacyGrade, ss.raw, ss.qualityScore);
+  if (best) {
+    const key = best.id + '_' + best.direction;
+    const refPrice = best.sweepLow !== undefined ? best.sweepLow : best.sweepHigh;
+    const isDup = arbDupCheck(_liveArbCooldown, key, now, refPrice, ARB_COOLDOWN_MS, ARB_PRICE_TOL);
+    if (!isDup) {
+      lastSigMs = now;
+      arbMarkFired(_liveArbCooldown, key, now, refPrice);
+      const sess  = strategy.activeSession() || 'SESSION';
+      const kzTag = strategy.activeKillZone() ? ` [${strategy.activeKillZone()}]` : '';
+      const grade = best.legacyGrade >= 3 ? '★★★' : best.legacyGrade === 2 ? '★★' : '★';
+      const nTag  = newsEngine.state !== 'NORMAL' ? ` [NEWS:${newsEngine.state}]` : '';
+      const isBuy = best.direction === 'BUY';
+      addSignal(isBuy ? 'buy' : 'sell',
+        `[${sess}]${kzTag} ${isBuy ? 'BUY' : 'SELL'} ${grade}${nTag} — ${best.label} · Quality ${best.qualityScore >= 0 ? Math.round(best.qualityScore) : '—'} (${best.raw && best.raw.quality ? best.raw.quality.grade : '?'}) ✓ SL@structure`, mid);
+      placeDemoTrade(isBuy ? 'UP' : 'DOWN', best.slRef || best.ob, best.legacyGrade, best.raw, best.qualityScore);
+    }
   }
 }
 
@@ -8005,6 +8548,7 @@ function startBot() {
   lastTradedBullSweepIdx = -1; lastTradedBearSweepIdx = -1;
   lastTradedBullSweepEpoch = 0; lastTradedBearSweepEpoch = 0;
   lastTradedBullSweepPrice = 0; lastTradedBearSweepPrice = 0;
+  _liveArbCooldown = {};
   if(!authed && demoBalance > 0 && hardFloor === 0) resetHardFloor(demoBalance);
   if(!authed) demoStartBal = demoBalance;
   if(authed && !startBalance && balance) { startBalance=balance; CFG.START_BALANCE=balance; }
@@ -8296,6 +8840,7 @@ const replay = {
     this.replayLastBullEpoch = 0; this.replayLastBearEpoch = 0;
     this.replayLastBullPrice = 0; this.replayLastBearPrice = 0;
     this.replayLastSigEpoch = 0; this.replayPosIdCounter = 0;
+    this._btArbCooldown = {};
     this.replayProfitTarget = profitTarget;
     this.replayProfitBaseline = startBal;
     this.replayProfitDay = null;
@@ -8936,36 +9481,29 @@ const replay = {
       this._lastNewsBlock = epoch;
     }
 
-    const bs = strategy.evalBuy(price);
-    const ss = strategy.evalSell(price);
+    // ── ARBITRATION — same Arbitration.evaluate() the live engine uses
+    // (Momentum Breakout [M1/M5 Fast Lane], EMA Pullback Continuation,
+    // Range-Edge Rejection — 6 candidates), so backtest results reflect
+    // exactly the same decision logic as live, never a separate copy of it. ──
+    const arb = Arbitration.evaluate(price);
+    const best = arb.best;
     let sig = null;
 
-    // ── Epoch + price dedup — mirrors runStrategy live dedup exactly ──
-    // OLD code used sweepIdx (array index in the sliding completedM1 window).
-    // That index shifts by 1 every bar as the window advances, so the same
-    // sweep candle gets a new index each bar and the dedup never fires →
-    // the same liquidity pool gets re-traded on every bar after a close.
-    // FIX: use epoch (seconds) + price-level proximity, same as live mode.
-    const SWEEP_COOLDOWN_S  = 5 * 60;  // was 10 min (orig 20 min) — shorter cooldown (in epoch seconds), matches live-mode loosening
-    const SWEEP_PRICE_TOL   = 0.3;      // 0.3 pt price-level tolerance
+    // ── Epoch + price dedup — same rule as live mode's arbDupCheck, keyed
+    // per strategy+direction so two different strategies (or the same
+    // strategy retriggering the opposite direction) don't fight over one
+    // shared cooldown slot. ──
+    const SWEEP_COOLDOWN_S = 5 * 60; // epoch seconds
+    const SWEEP_PRICE_TOL  = 0.3;
 
-    const isBullDup = bs.sweepEpoch !== undefined && bs.score < 9 && (
-      (epoch - this.replayLastBullEpoch < SWEEP_COOLDOWN_S) ||
-      (Math.abs((bs.sweepLow  || 0) - this.replayLastBullPrice) < SWEEP_PRICE_TOL)
-    );
-    const isBearDup = ss.sweepEpoch !== undefined && ss.score < 9 && (
-      (epoch - this.replayLastBearEpoch < SWEEP_COOLDOWN_S) ||
-      (Math.abs((ss.sweepHigh || 0) - this.replayLastBearPrice) < SWEEP_PRICE_TOL)
-    );
-
-    if (bs.signal && bs.sweepEpoch !== undefined && !isBullDup) {
-      sig = { dir: 'UP', ob: bs.ob, quality: bs.legacyGrade, raw: bs.raw, qualityScore: bs.qualityScore };
-      this.replayLastBullEpoch = epoch;
-      this.replayLastBullPrice = bs.sweepLow  || 0;
-    } else if (ss.signal && ss.sweepEpoch !== undefined && !isBearDup) {
-      sig = { dir: 'DOWN', ob: ss.ob, quality: ss.legacyGrade, raw: ss.raw, qualityScore: ss.qualityScore };
-      this.replayLastBearEpoch = epoch;
-      this.replayLastBearPrice = ss.sweepHigh || 0;
+    if (best) {
+      const key = best.id + '_' + best.direction;
+      const refPrice = best.sweepLow !== undefined ? best.sweepLow : best.sweepHigh;
+      const isDup = arbDupCheck(this._btArbCooldown, key, epoch, refPrice, SWEEP_COOLDOWN_S, SWEEP_PRICE_TOL);
+      if (!isDup) {
+        sig = { dir: best.direction === 'BUY' ? 'UP' : 'DOWN', ob: best.slRef || best.ob, quality: best.legacyGrade, raw: best.raw, qualityScore: best.qualityScore };
+        arbMarkFired(this._btArbCooldown, key, epoch, refPrice);
+      }
     }
 
     if (sig) {

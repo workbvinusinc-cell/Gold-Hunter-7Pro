@@ -722,7 +722,7 @@ input[type=range]::-webkit-slider-thumb{
         <div class="cond" data-k="bSess"><span class="ci no">○</span>Context: M5 Trend Bias = BULL (soft filter, not mandatory)</div>
         <div class="cond" data-k="bKZ"><span class="ci no">○</span>Context: Kill Zone Active (Asian/London/NY KZ)</div>
         <div class="cond" data-k="bSweep"><span class="ci no">○</span>G1: M1 Momentum Breakout — candle closes above N-bar range with strong body</div>
-        <div class="cond" data-k="bBMS"><span class="ci no">○</span>G2: Market Regime OK (not DEAD) & Inside Kill Zone (Asian/London/NY)</div>
+        <div class="cond" data-k="bBMS"><span class="ci no">○</span>G2: Market Regime OK (not DEAD / no-volatility)</div>
         <div class="cond" data-k="bOB"><span class="ci no">○</span>G3: News Blackout Clear (outside high-impact release window)</div>
         <div class="cond" data-k="bFVG"><span class="ci no">○</span>G4: Room-To-Run Confirmed (no wall within min ATR distance)</div>
         <div class="cond" data-k="bZone"><span class="ci no">○</span>G5: No Rejection Wick (opposing wick under 35% of candle range)</div>
@@ -736,7 +736,7 @@ input[type=range]::-webkit-slider-thumb{
         <div class="cond" data-k="sSess"><span class="ci no">○</span>Context: M5 Trend Bias = BEAR (soft filter, not mandatory)</div>
         <div class="cond" data-k="sKZ"><span class="ci no">○</span>Context: Kill Zone Active (Asian/London/NY KZ)</div>
         <div class="cond" data-k="sSweep"><span class="ci no">○</span>G1: M1 Momentum Breakout — candle closes below N-bar range with strong body</div>
-        <div class="cond" data-k="sBMS"><span class="ci no">○</span>G2: Market Regime OK (not DEAD) & Inside Kill Zone (Asian/London/NY)</div>
+        <div class="cond" data-k="sBMS"><span class="ci no">○</span>G2: Market Regime OK (not DEAD / no-volatility)</div>
         <div class="cond" data-k="sOB"><span class="ci no">○</span>G3: News Blackout Clear (outside high-impact release window)</div>
         <div class="cond" data-k="sFVG"><span class="ci no">○</span>G4: Room-To-Run Confirmed (no wall within min ATR distance)</div>
         <div class="cond" data-k="sZone"><span class="ci no">○</span>G5: No Rejection Wick (opposing wick under 35% of candle range)</div>
@@ -757,6 +757,46 @@ input[type=range]::-webkit-slider-thumb{
       <div class="deposit-notice-icon" style="font-size:22px;margin-bottom:6px">$</div>
       <div class="deposit-notice-title">Set Your Starting Balance</div>
       <div class="deposit-notice-text">Enter an amount below to fund your demo account, then press <strong>Save &amp; Apply</strong> to begin trading.</div>
+    </div>
+    <div class="settings-section" id="brokerSection">
+      <div class="settings-section-title">🔌 Broker Connection — MetaApi (Exness)</div>
+      <div class="field">
+        <label style="display:flex;align-items:center;justify-content:space-between">
+          <span>Live Trading</span>
+          <input type="checkbox" id="cfgBrokerEnabled"/>
+        </label>
+        <div class="field-hint" style="color:var(--red)">When ON: (1) every signal sends a real market order to Exness via MetaApi with real SL/TP, and (2) the price feed & candles switch from Binance/PAXG to Exness's own live quotes for XAUUSDm. Run Test Connection first — it must show CONNECTED.</div>
+      </div>
+      <div class="field">
+        <label>MetaApi Account ID</label>
+        <div class="field-row"><input class="finput" type="text" id="cfgBrokerAccountId" placeholder="e.g. 2b93f6a7-692f-4332-..."/></div>
+      </div>
+      <div class="field">
+        <label>MetaApi API Token</label>
+        <div class="field-row"><input class="finput" type="password" id="cfgBrokerToken" placeholder="paste token"/></div>
+        <div class="field-hint">Stored only in this browser's local storage — never sent anywhere except MetaApi's API.</div>
+      </div>
+      <div class="field">
+        <label>Region</label>
+        <div class="field-row">
+          <select class="finput" id="cfgBrokerRegion">
+            <option value="london">london</option>
+            <option value="new-york">new-york</option>
+            <option value="singapore">singapore</option>
+            <option value="frankfurt">frankfurt</option>
+          </select>
+        </div>
+        <div class="field-hint">Shown on your account's page in the MetaApi dashboard.</div>
+      </div>
+      <div class="field">
+        <label>Symbol (exact spelling on your Exness server)</label>
+        <div class="field-row"><input class="finput" type="text" id="cfgBrokerSymbol" placeholder="XAUUSDm"/></div>
+        <div class="field-hint">Suffixes vary by server (XAUUSD, XAUUSDm, XAUUSD.a...). Check Market Watch → Symbols in MT5.</div>
+      </div>
+      <div class="field-row" style="gap:8px;margin-top:2px;align-items:center">
+        <button class="nav-btn" onclick="testBrokerConnection()">Test Connection</button>
+        <span id="brokerStatus" style="font-size:10px;color:var(--text2)">Not tested yet</span>
+      </div>
     </div>
     <div class="settings-section" id="riskAuditSection" style="display:none">
       <div class="settings-section-title">🔍 Risk Audit (Last Trade)</div>
@@ -1258,16 +1298,143 @@ let _binanceWS             = null;  // WebSocket handle — Binance live feed
 let _binanceReconnectTimer = null;
 let _binanceOpenFailures   = 0;     // consecutive failed connect attempts on the current host — triggers failover
 
+// ── LIVE BROKER — Exness via MetaApi ──────────────────────────────────────
+// Ported from the BTCUSD build's finished MetaApi integration. When enabled
+// via Settings, this replaces the Binance/PAXG feed with your actual Exness
+// XAUUSDm quotes for both live price and history, and every signal sends a
+// real market order instead of a simulated fill.
+const LiveBroker = {
+  accountId: '',
+  token: '',
+  region: 'london',
+  symbol: 'XAUUSDm',
+  enabled: false,
+  connectionStatus: 'UNKNOWN',
+
+  baseUrl() { return `https://mt-client-api-v1.${this.region}.agiliumtrade.ai`; },
+  // Historical candles/ticks are served from a SEPARATE MetaApi hostname
+  // (mt-market-data-client-api-v1, not mt-client-api-v1) — hitting the
+  // regular client-api host for historical-market-data 404s. See
+  // https://metaapi.cloud/docs/client/restApi/api/retrieveMarketData/readHistoricalCandles/
+  historyBaseUrl() { return `https://mt-market-data-client-api-v1.${this.region}.agiliumtrade.ai`; },
+  headers() { return { 'auth-token': this.token, 'Content-Type': 'application/json' }; },
+  configured() { return !!(this.accountId && this.token && this.region); },
+
+  async _reqTo(base, path, opts = {}, timeoutMs = 20000) {
+    if (!this.configured()) throw new Error('Broker not configured — set Account ID / Token / Region in Settings');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let res;
+    try {
+      res = await fetch(`${base}${path}`, {
+        ...opts,
+        signal: controller.signal,
+        headers: { ...this.headers(), ...(opts.headers || {}) },
+      });
+    } catch (e) {
+      if (e.name === 'AbortError') throw new Error(`Request timed out after ${(timeoutMs / 1000).toFixed(0)}s`);
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+    const text = await res.text();
+    let data;
+    try { data = text ? JSON.parse(text) : {}; } catch (e) { data = { raw: text }; }
+    if (!res.ok) {
+      const msg = (data && (data.message || data.error)) || `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    return data;
+  },
+  async _req(path, opts = {}) { return this._reqTo(this.baseUrl(), path, opts); },
+
+  async getAccountInformation() {
+    return this._req(`/users/current/accounts/${this.accountId}/account-information`);
+  },
+  async getPositions() {
+    return this._req(`/users/current/accounts/${this.accountId}/positions`);
+  },
+  async getDealsByPosition(positionId) {
+    return this._req(`/users/current/accounts/${this.accountId}/history-deals/position/${positionId}`);
+  },
+  async getCurrentPrice() {
+    return this._req(`/users/current/accounts/${this.accountId}/symbols/${this.symbol}/current-price`);
+  },
+  async getHistoricalCandles(timeframe, limit, startTime) {
+    // MetaApi loads candles BACKWARD from startTime (or the latest candles if
+    // startTime is omitted). limit is capped at 1000 by MetaApi itself.
+    const qs = new URLSearchParams({ limit: String(Math.min(limit || 1000, 1000)) });
+    if (startTime) qs.set('startTime', startTime);
+    return this._reqTo(
+      this.historyBaseUrl(),
+      `/users/current/accounts/${this.accountId}/historical-market-data/symbols/${this.symbol}/timeframes/${timeframe}/candles?${qs.toString()}`,
+      {}, 60000 // this endpoint can be slow — MetaApi docs warn it may take up to 4min server-side; give it more room than the default 20s
+    );
+  },
+  async testConnection() {
+    const info = await this.getAccountInformation();
+    this.connectionStatus = info.connectionStatus || 'UNKNOWN';
+    return info;
+  },
+  async placeMarketOrder({ dir, volume, sl, tp, comment = 'PA Bot' }) {
+    const body = {
+      actionType: dir === 'UP' ? 'ORDER_TYPE_BUY' : 'ORDER_TYPE_SELL',
+      symbol: this.symbol,
+      volume: +volume.toFixed(2),
+      stopLoss: +sl.toFixed(2),
+      takeProfit: +tp.toFixed(2),
+      comment: String(comment).slice(0, 26),
+    };
+    return this._req(`/users/current/accounts/${this.accountId}/trade`, { method: 'POST', body: JSON.stringify(body) });
+  },
+  async modifyPosition(positionId, sl, tp) {
+    const body = { actionType: 'POSITION_MODIFY', positionId, stopLoss: +sl.toFixed(2), takeProfit: +tp.toFixed(2) };
+    return this._req(`/users/current/accounts/${this.accountId}/trade`, { method: 'POST', body: JSON.stringify(body) });
+  },
+  async closePosition(positionId) {
+    return this._req(`/users/current/accounts/${this.accountId}/trade`, {
+      method: 'POST', body: JSON.stringify({ actionType: 'POSITION_CLOSE_ID', positionId }),
+    });
+  },
+
+  load() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('pabotBrokerXAU') || '{}');
+      this.accountId = saved.accountId || '';
+      this.token     = saved.token || '';
+      this.region    = saved.region || 'london';
+      this.symbol    = saved.symbol || 'XAUUSDm';
+      this.enabled   = !!saved.enabled;
+    } catch (e) {}
+  },
+  save() {
+    try {
+      localStorage.setItem('pabotBrokerXAU', JSON.stringify({
+        accountId: this.accountId, token: this.token, region: this.region,
+        symbol: this.symbol, enabled: this.enabled,
+      }));
+    } catch (e) {}
+  },
+};
+LiveBroker.load();
+
+function updateModeBadge() {
+  const b = document.getElementById('modeBadge');
+  if (!b) return;
+  if (LiveBroker.enabled) { b.textContent = 'LIVE'; b.className = 'badge badge-live'; }
+  else                    { b.textContent = 'DEMO'; b.className = 'badge badge-demo'; }
+}
+
 const CFG = {
   RISK_PCT     : 1.0,
-  // Lowered again from 1.8 — this is the "win more, lose less" pass: a
-  // lower R target is tagged by ordinary follow-through far more often
-  // than a stretch target is, which is what actually moves the win-rate
-  // needle (as opposed to just cutting more trades pre-entry). 1.5R still
-  // pays more than it risks on every win, and the breakeven-required win
-  // rate only rises modestly, from ~36% (@1.8R) to 40% (@1.5R) — well
-  // below the win rate this bot's B+/A/A+ grade floor is now targeting.
-  RR           : 1.5,
+  // Lowered from 3.0 — a 3R target on 1-min XAUUSD breakouts is rarely reached
+  // before price retraces into the stop, which is why SL hits dominated TP
+  // hits even on decent setups. 1.8R is still a healthy reward:risk but sits
+  // close enough to typical follow-through that TP actually gets tagged
+  // before a normal pullback reaches the stop — this is the single biggest
+  // lever for flipping win-rate above 50%, since breakeven-required win rate
+  // drops from 25% (@3R) to ~36% (@1.8R) while realistic hit rates go up too.
+  RR           : 1.8,
   START_BALANCE: 0,
   PROFIT_TARGET: 0,
   // ── Profit Lock ──
@@ -1292,9 +1459,7 @@ const CFG = {
                                // account tier/equity; 1:1000 is used here as the representative default
   MAX_SPREAD_USD: 1.5,        // reference only — spread guard removed, trades no longer gated on this (tuned to Exness's tighter Raw Spread XAUUSD range, in raw $ price units)
   MAX_SL_PTS   : 20.0,        // Hard cap on SL distance in $ (rescaled for XAUUSD's price magnitude — tune to live ATR)
-  MAX_CONCURRENT_POS: 2,       // lowered from 5 — win-rate-focused pass: fewer, higher-quality signals means
-                                // less need to stack correlated XAUUSD positions; also caps how much a single
-                                // bad session can compound across simultaneous trades
+  MAX_CONCURRENT_POS: 5,      // was 3 (orig 2) — how many trades the bot can hold open at once
   // Portfolio-heat cap, in R multiples (1R = one trade's quality-multiplier-
   // boosted risk). Since this bot only trades XAUUSD, concurrent positions
   // are highly correlated — this stops the per-trade quality size bonus from
@@ -1736,13 +1901,27 @@ let btFetching = false;
 // Tries the direct URL first; falls back to corsproxy.io if the request
 // fails (CORS block, server unavailable, etc.). Resolves to parsed JSON
 // or throws if both attempts fail.
+// BUG FIX: neither the direct request nor the corsproxy.io fallback had a
+// timeout. A request that stalls (no error, no response — common with
+// corsproxy.io under load, or a network that silently drops the connection)
+// left this `await` pending forever. Since fetchNewsForBacktest calls this
+// once per week in the backtest range, one stuck request anywhere in that
+// sequence froze the ENTIRE backtest permanently right after the candle
+// fetch completed — candles loaded, but replay never started, with no error
+// shown. Both attempts now abort after 8s so a hung request fails fast
+// instead of hanging the whole run.
 async function _fetchJSON(url) {
+  const withTimeout = (u, ms) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    return fetch(u, { cache: 'no-store', signal: controller.signal }).finally(() => clearTimeout(timer));
+  };
   try {
-    const r = await fetch(url, { cache: 'no-store' });
+    const r = await withTimeout(url, 8000);
     if (r.ok) return r.json();
   } catch (_) {}
   // Proxy fallback
-  const r2 = await fetch('https://corsproxy.io/?' + encodeURIComponent(url), { cache: 'no-store' });
+  const r2 = await withTimeout('https://corsproxy.io/?' + encodeURIComponent(url), 8000);
   if (!r2.ok) throw new Error(`HTTP ${r2.status}`);
   return r2.json();
 }
@@ -2068,11 +2247,10 @@ const REFINED_STRATEGY_CFG = {
     // lookback means the breakout has to clear a level that actually meant
     // something, and it gives the SL underneath it real room.
     lookbackBars: 8,
-    // Raised again 0.35 → 0.42 — this is the win-rate-focused pass: a
-    // breakout candle needs to show real, decisive conviction in its body
-    // (not just clear the range by a wick) to be trusted as a genuine move
-    // rather than noise poking through a quiet range.
-    minBodyRatio: 0.42,
+    // Raised back up — 0.10 let near-doji "breakouts" (barely more than a
+    // wick past the range) trigger trades. Requiring real conviction in the
+    // candle body cuts the fakeout rate at the trigger itself.
+    minBodyRatio: 0.35,
     useTrendFilter: true,   // was false — re-enabled: trading with the M5 trend is the single biggest lever
                              // for setups that "almost win" rather than firing into a countertrend fade.
                              // NOTE: this is a SOFT filter (see evaluate() below) — it does not block
@@ -2088,21 +2266,11 @@ const REFINED_STRATEGY_CFG = {
     avoidDeadRegime: true,
     avoidNewsRelease: true,  // was false — re-enabled: the ±5min release window is where spread spikes and
                               // fake wicks live, the fastest way to turn a good setup into a near-miss loss
-    // NEW — restricts entries to the Asian/London/NY kill-zone windows
-    // (see strategy.inKillZone() for the exact hours). Gold's cleanest
-    // breakouts cluster there; the dead stretches between sessions are
-    // the main source of fakeout breakouts on a 1-min chart. This is the
-    // single biggest lever for cutting trade frequency while skewing what
-    // gets cut toward the lowest-quality setups specifically (thin-book
-    // hours), not a random subsample — set false to trade around the clock.
-    requireKillZone: true,
     roomLookbackBars: 25,    // window used to check for a nearby opposing swing extreme ahead of the trade
-    // Raised again 0.5 → 0.65 — same win-rate pass: even 0.5 ATR of runway
-    // can leave a trade clipping a minor obstruction almost immediately.
-    // 0.65 ATR asks for more genuine space before the next opposing swing
-    // extreme, which is one of the more reliable "will this follow through"
-    // signals available pre-entry.
-    minRoomATR: 0.65
+    // Raised back up — 0.2 ATR of runway is almost nothing; it let the bot
+    // buy/sell right into a wall a bar or two away, which is a classic
+    // immediate-SL setup. 0.5 ATR gives the move somewhere to actually go.
+    minRoomATR: 0.5
   },
 
   // ---------- Liquidity (kept for chart zone drawing / backtesting tools only — no longer gates entries) ----------
@@ -2187,20 +2355,16 @@ const REFINED_STRATEGY_CFG = {
     // grade assignment in evaluate() below, and the legacy star bridge in
     // refinedScoreToLegacyGrade(), both updated to drop the B tier).
     minimumScore: 60,
-    // Raised again 78 → 82 — same lever as before (this is the gate the
-    // vast majority of trend-aligned trades pass through), pushed further
-    // for this win-rate-focused pass.
-    plusScore: 82,        // B+ floor — the actual entry gate for trend-aligned setups
-    // Raised 83 → 90 — counter-trend (fade) setups are the highest-variance
-    // trade this bot takes, since they're fighting the M5 bias rather than
-    // riding it. Pushing this close to eliteScore means a counter-trend
-    // setup now has to be almost flawless across every sub-score to fire
-    // at all, which is the intent: counter-trend should be a rare
-    // exception, not a regular second trade type.
-    premiumScore: 90,    // A  floor — the entry gate for COUNTER-trend setups
-    eliteScore: 98,      // A+ floor — top tier, gets the longest RR via gradeRRContinuous()
+    // Raised 70 → 78 — the trend-aligned gate is the volume lever (it's the
+    // gate the vast majority of trades pass through). Pushing it up trades
+    // trade count for selectivity — this plus the two changes below is the
+    // combined lever for cutting frequency while skewing what's cut toward
+    // the weaker setups specifically, not a random subsample.
+    plusScore: 78,        // B+ floor — the actual entry gate for trend-aligned setups
+    premiumScore: 83,    // A  floor — the entry gate for COUNTER-trend setups
+    eliteScore: 97,      // A+ floor — top tier, gets the longest RR via gradeRRContinuous()
                           // scoreTotal is clamped to 0-100 (see clamp(..., 0, 100) in
-                          // evaluate()), so 98 is still reachable but only for
+                          // evaluate()), so 97 is still reachable but only for
                           // near-perfect setups.
 
     weights: {
@@ -2231,7 +2395,7 @@ const REFINED_STRATEGY_CFG = {
 
   // ---------- Trade geometry ----------
   trade: {
-    rr: 1.5,   // kept in sync with CFG.RR — see comment there
+    rr: 1.8,   // kept in sync with CFG.RR — see comment there
 
     // "SWEEP", "OB", "STRUCTURE", or "HYBRID"
     slReference: "HYBRID",
@@ -2274,7 +2438,7 @@ const REFINED_STRATEGY_CFG = {
   // ---------- Execution ----------
   execution: {
     onePositionAtATime: false,       // kept for backward compatibility
-    maxConcurrentPositions: 2,       // lowered from 3 — kept in sync with CFG.MAX_CONCURRENT_POS
+    maxConcurrentPositions: 3,       // was 2
     duplicateCooldownMs: 45000,      // was 90000
     duplicatePriceTolerance: 0.05    // rescaled for XAUUSD's $ price magnitude (was 0.21 for BTC)
   },
@@ -3363,25 +3527,6 @@ const RefinedStrategy = (() => {
     if (C.simple.avoidDeadRegime && regime === "DEAD") {
       return {
         signal: false, reason: "DEAD_MARKET_REGIME", direction, trend, quality: null,
-        gates: { trigger: true, regimeOk: false, newsOk: false, roomOk: false, wickOk: false, quality: false }
-      };
-    }
-
-    // ── Kill-zone session filter — folded into the same gate slot as the
-    // regime check above (G2), since both answer the same underlying
-    // question: "is the market structurally worth trading right now?".
-    // Gold's cleanest, most reliable breakouts cluster in the Asian/London/
-    // NY kill-zone windows (deep liquidity, real participants) — the dead
-    // stretches between them (roughly 03-07, 10-13, 16-24 UTC) are where
-    // this exact momentum-breakout shape is most likely to be thin-book
-    // noise breaking a quiet range, not a real move with follow-through.
-    // strategy.inKillZone() already existed for the chart badge/signal-feed
-    // tag; this is the same function now also gating entries. Set
-    // C.simple.requireKillZone = false in REFINED_STRATEGY_CFG to go back
-    // to trading around the clock.
-    if (C.simple.requireKillZone && typeof strategy !== "undefined" && !strategy.inKillZone()) {
-      return {
-        signal: false, reason: "OUTSIDE_KILL_ZONE", direction, trend, quality: null,
         gates: { trigger: true, regimeOk: false, newsOk: false, roomOk: false, wickOk: false, quality: false }
       };
     }
@@ -6140,6 +6285,7 @@ function _executeDemoTrade(dir, ob, quality = 1, rawSetup = null, qualityScore =
   if(!mid) return;
   const gate = preTradeSafetyCheck();
   if(!gate.ok) return;
+  if(LiveBroker.enabled) { _executeLiveTrade(dir, ob, quality, rawSetup, qualityScore); return; }
 
   const isBuy = dir === 'UP';
   // ── LIVE SPREAD — real bid/ask from Binance + news overlay ──
@@ -6241,6 +6387,177 @@ function _executeDemoTrade(dir, ob, quality = 1, rawSetup = null, qualityScore =
   updateDemoPositionsUI();
   updateStatsStrip();
 }
+
+// ── LIVE TRADE EXECUTION (real Exness order via MetaApi) ──
+// Mirrors _executeDemoTrade's SL/TP geometry and position-sizing exactly, but
+// instead of simulating a fill, sends a real market order to the broker and
+// builds the position from the broker's actual response. Closes are NOT
+// simulated here — the broker's own SL/TP does the closing, and
+// syncLivePositions() (polling, see below) detects the close and reconciles
+// balance/PnL from the account's real deal history.
+async function _executeLiveTrade(dir, ob, quality = 1, rawSetup = null, qualityScore = null) {
+  if(!mid) return;
+  if(!LiveBroker.configured()) { addSignal('warn','LIVE mode is on but the broker isn\'t configured — open Settings and fill in Account ID / Token / Region', null); return; }
+
+  const isBuy = dir === 'UP';
+  const refPrice = mid; // planning reference — the broker executes at the real market price
+
+  // ── SL/TP GEOMETRY — identical logic to the demo path ──
+  let slPrice, geomUsed = false;
+  if (rawSetup && rawSetup.signal) {
+    const geometry = RefinedStrategy.calculateTradeGeometry(dir === 'UP' ? 'BUY' : 'SELL', refPrice, rawSetup);
+    if (geometry.valid) { slPrice = geometry.sl; geomUsed = true; }
+  }
+  if (!geomUsed) {
+    const arr = candles[currentTF];
+    const lastN = arr && arr.length >= 14 ? arr.slice(-14) : (arr || []);
+    const atr = lastN.length > 0 ? lastN.reduce((s, c) => s + c.high - c.low, 0) / lastN.length : 1.5;
+    if(ob) {
+      const obBuffer = Math.max(10, Math.min(60, atr * 0.15));
+      slPrice = isBuy ? ob.low - obBuffer : ob.high + obBuffer;
+    } else {
+      slPrice = isBuy ? refPrice - atr * 1.5 : refPrice + atr * 1.5;
+    }
+  }
+  let slDist = Math.abs(refPrice - slPrice);
+  if(slDist > CFG.MAX_SL_PTS) {
+    slPrice = isBuy ? refPrice - CFG.MAX_SL_PTS : refPrice + CFG.MAX_SL_PTS;
+    slDist = CFG.MAX_SL_PTS;
+  }
+  if(slDist < 0.5) { addSignal('warn','LIVE: SL too tight (< $0.5) — skipping',null); return; }
+  const rr = gradeRRContinuous(qualityScore) ?? gradeRR(quality);
+  const tpPrice = isBuy ? refPrice + slDist * rr : refPrice - slDist * rr;
+
+  // ── SIZING — identical logic to the demo path ──
+  const riskCheck = checkRiskOverflow(slDist, quality, undefined, { usePositions: demoPositions, useMid: mid, qualityScore });
+  const newsLotMult = newsEngine.lotMultiplier();
+  const adjLots = Math.max(CFG.MIN_LOT_SIZE, Math.min(CFG.MAX_LOT_CAP, +(riskCheck.lots * newsLotMult).toFixed(2)));
+  if(adjLots < CFG.MIN_LOT_SIZE) { addSignal('warn','LIVE: insufficient sizing for the minimum lot','',null); return; }
+
+  addSignal('info', `LIVE: sending ${isBuy?'BUY':'SELL'} ${adjLots.toFixed(2)}L order to Exness (MetaApi)...`, mid);
+
+  let resp;
+  try {
+    resp = await LiveBroker.placeMarketOrder({ dir, volume: adjLots, sl: slPrice, tp: tpPrice });
+  } catch (e) {
+    addSignal('warn', `LIVE order FAILED: ${e.message}`, null);
+    return;
+  }
+
+  const brokerPositionId = resp.positionId || resp.orderId;
+  let entryPrice = Number(resp.price) || refPrice;
+  try {
+    const positions = await LiveBroker.getPositions();
+    const match = (positions || []).find(p => String(p.id) === String(brokerPositionId));
+    if (match && match.openPrice) entryPrice = match.openPrice;
+  } catch (e) { /* non-fatal — keep the estimated fill */ }
+
+  const posUnits = adjLots * CONTRACT_SIZE;
+  const margin = (adjLots * CONTRACT_SIZE * entryPrice) / CFG.LEVERAGE;
+  const slAmount = adjLots * CONTRACT_SIZE * Math.abs(entryPrice - slPrice);
+  const tpAmount = +(slAmount * rr).toFixed(2);
+  const grade = quality >= 3 ? '★★★' : quality === 2 ? '★★' : '★';
+
+  const pos = {
+    id: ++demoPosId, dir, entry: entryPrice, lots: adjLots, posUnits, margin,
+    slPrice, tpPrice, slAmount, tpAmount, quality, qualityScore,
+    riskAmount: slAmount, qMult: riskCheck.qMult,
+    beTriggered: false, trailActive: false, trailPhase: 0, trailHighWater: entryPrice, openTime: Date.now(),
+    partialTaken: true,   // disables the synthetic partial-TP engine — the real broker owns this position's exit
+    live: true, brokerPositionId, brokerSyncing: false,
+  };
+  demoPositions.push(pos);
+  updateRiskAudit(riskCheck, pos);
+  addSignal(dir==='UP'?'buy':'sell',
+    `LIVE ${isBuy?'BUY':'SELL'} ${adjLots.toFixed(2)}L ${grade} @ ${entryPrice.toFixed(2)} | SL:${slPrice.toFixed(2)} TP:${tpPrice.toFixed(2)} [Exness #${brokerPositionId}]`, mid);
+  const logEntry = {
+    id: pos.id, dir: isBuy?'BUY':'SELL', entry: entryPrice, status: 'open', pnl: null,
+    tpPrice: pos.tpPrice, slPrice: pos.slPrice, lots: adjLots,
+    slDist: +slDist.toFixed(2), slAmount: +slAmount.toFixed(2), tpAmount: +tpAmount.toFixed(2),
+    quality, openTime: Date.now(), newsState: newsEngine.state,
+    dynSpread: 0, slip: 0, live: true, brokerPositionId,
+  };
+  demoTradeLog.unshift(logEntry);
+  updateLastTrade({...logEntry, entry:entryPrice});
+  updateDemoPositionsUI();
+  updateStatsStrip();
+}
+
+// ── LIVE POSITION SYNC — polls MetaApi for real closes/balance ──
+// Runs on an interval. For each locally-tracked live position that no longer
+// appears in the broker's open positions, it pulls the real closing deal(s)
+// to get the exact exit price/reason/profit, then reconciles the displayed
+// balance against the account's real balance (never hand-computed) so the
+// UI can't drift from what Exness actually shows.
+let _liveSyncBusy = false;
+async function syncLivePositions() {
+  if (!LiveBroker.enabled || !LiveBroker.configured() || _liveSyncBusy) return;
+  _liveSyncBusy = true;
+  try {
+    let info = null;
+    try { info = await LiveBroker.getAccountInformation(); LiveBroker.connectionStatus = info.connectionStatus || LiveBroker.connectionStatus; }
+    catch (e) { /* transient network/API errors shouldn't spam signals every 6s */ }
+
+    const liveOpen = demoPositions.filter(p => p.live);
+    if (liveOpen.length) {
+      let brokerPositions = [];
+      try { brokerPositions = await LiveBroker.getPositions(); }
+      catch (e) { addSignal('warn', `LIVE: position sync failed — ${e.message}`, null); brokerPositions = null; }
+
+      if (brokerPositions) {
+        const openIds = new Set(brokerPositions.map(p => String(p.id)));
+        for (const pos of liveOpen) {
+          if (openIds.has(String(pos.brokerPositionId))) continue; // still open on the broker
+
+          let exitPrice = pos.slPrice, pnl = 0, reason = 'CLOSED';
+          try {
+            const deals = await LiveBroker.getDealsByPosition(pos.brokerPositionId);
+            const closingDeals = (deals || []).filter(d => d.entryType === 'DEAL_ENTRY_OUT' || d.entryType === 'DEAL_ENTRY_OUT_BY');
+            if (closingDeals.length) {
+              pnl = closingDeals.reduce((s, d) => s + (d.profit || 0) + (d.commission || 0) + (d.swap || 0), 0);
+              const last = closingDeals[closingDeals.length - 1];
+              if (last.price) exitPrice = last.price;
+              if (last.reason) reason = String(last.reason).replace('DEAL_REASON_', '');
+              else reason = Math.abs(exitPrice - pos.tpPrice) < Math.abs(exitPrice - pos.slPrice)
+                ? 'TP' : ((pos.trailPhase||0) >= 2 ? 'TRAIL' : (pos.trailPhase||0) >= 1 ? 'BE' : 'SL');
+            }
+          } catch (e) {
+            addSignal('warn', `LIVE: couldn't fetch close details for #${pos.id} — ${e.message}`, null);
+          }
+
+          demoPositions = demoPositions.filter(p => p.id !== pos.id);
+          sessionPnL += pnl;
+          checkProfitLock();
+          if (pnl > 0) { wins++; consecutiveWins++; consecutiveLosses = 0; if (riskHalved) { riskHalved = false; addSignal('info', 'Win — risk restored to normal', null); } }
+          else { losses++; consecutiveLosses++; consecutiveWins = 0; if (consecutiveLosses >= SAFETY.CONSEC_LOSS_HALVE) { riskHalved = true; addSignal('warn', `${consecutiveLosses}x consecutive losses — risk halved`, null); } }
+
+          const log = demoTradeLog.find(t => t.id === pos.id);
+          if (log) { log.status = reason; log.pnl = pnl; log.closeTime = Date.now(); log.trailPhase = pos.trailPhase || 0; Storage.saveTrade({ ...log, closedAt: Date.now() }); }
+
+          const dirLbl = pos.dir === 'UP' ? 'BUY' : 'SELL';
+          addSignal(pnl > 0 ? 'buy' : 'sell', `LIVE ${dirLbl} CLOSED [${reason}] PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} @ ${(+exitPrice).toFixed(2)} [Exness #${pos.brokerPositionId}]`, mid);
+          updateLastTrade({ id: pos.id, dir: dirLbl, entry: pos.entry, status: reason, pnl });
+          const sess = strategy.activeSession ? strategy.activeSession() : 'UNKNOWN';
+          if (sessionStats[sess]) { if (pnl > 0) sessionStats[sess].w++; else sessionStats[sess].l++; }
+        }
+        updateDemoPositionsUI();
+      }
+    }
+
+    if (info && Number.isFinite(+info.balance)) {
+      demoBalance = +info.balance;
+      if (!liveEquity.length) liveEquity = [demoStartBal || demoBalance];
+      liveEquity.push(+demoBalance.toFixed(2));
+      const _eq = Number.isFinite(+info.equity) ? +info.equity : demoBalance;
+      liveMaxBal = Math.max(liveMaxBal || _eq, _eq);
+      if (liveMaxBal > 0) liveMaxDD = Math.max(liveMaxDD, ((liveMaxBal - _eq) / liveMaxBal) * 100);
+      updateStatsStrip();
+    }
+  } finally {
+    _liveSyncBusy = false;
+  }
+}
+setInterval(syncLivePositions, 6000);
 
 // Grade-based trail offset — applied equally to all three phase thresholds
 // so the ordering (P1 < P2 < P3) is always preserved. Weak (grade 1/C)
@@ -6845,9 +7162,40 @@ function loadSettings() {
   if(CFG.DEMO_BALANCE > 0) resetHardFloor(CFG.DEMO_BALANCE);
   updateDepositNotice();
   updateStatsStrip();
+  LiveBroker.load();
+  $('cfgBrokerEnabled').checked  = LiveBroker.enabled;
+  $('cfgBrokerAccountId').value  = LiveBroker.accountId;
+  $('cfgBrokerToken').value      = LiveBroker.token;
+  $('cfgBrokerRegion').value     = LiveBroker.region || 'london';
+  $('cfgBrokerSymbol').value     = LiveBroker.symbol || 'XAUUSDm';
+  updateModeBadge();
+}
+
+async function testBrokerConnection() {
+  const statusEl = $('brokerStatus');
+  statusEl.textContent = 'Testing...'; statusEl.style.color = 'var(--text2)';
+  LiveBroker.accountId = $('cfgBrokerAccountId').value.trim();
+  LiveBroker.token     = $('cfgBrokerToken').value.trim();
+  LiveBroker.region    = $('cfgBrokerRegion').value;
+  LiveBroker.symbol    = $('cfgBrokerSymbol').value.trim() || 'XAUUSDm';
+  try {
+    const info = await LiveBroker.testConnection();
+    const ok = info.connectionStatus === 'CONNECTED';
+    statusEl.textContent = `${info.connectionStatus || info.state || '—'} · bal $${(+info.balance||0).toFixed(2)} · ${info.server||''} · ${info.login||''}`;
+    statusEl.style.color = ok ? 'var(--green)' : 'var(--gold)';
+    if (!ok) {
+      addSignal('warn', `MetaApi reachable but broker connectionStatus is ${info.connectionStatus} — live orders will fail until it shows CONNECTED. Check the MT5 login/password/server saved in the MetaApi dashboard.`, null);
+    } else {
+      addSignal('info', `MetaApi connected — balance $${(+info.balance||0).toFixed(2)}, equity $${(+info.equity||0).toFixed(2)}`, null);
+    }
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`; statusEl.style.color = 'var(--red)';
+    addSignal('warn', `MetaApi test failed: ${e.message}`, null);
+  }
 }
 
 function saveSettings() {
+  const _brokerEnabledBeforeSave = LiveBroker.enabled;
   const newBal = parseFloat($('cfgDemoBalance').value) || 0;
   CFG.DEMO_BALANCE  = newBal;
   CFG.PROFIT_TARGET = parseFloat($('cfgProfitTarget').value) || 0;
@@ -6907,6 +7255,18 @@ function saveSettings() {
     lockedProfit = 0; profitLockHits = 0; profitLockBaseline = newBal; profitLockDay = new Date().toDateString();
   }
   if(authed && !startBalance && balance) { startBalance = balance; CFG.START_BALANCE = balance; }
+  LiveBroker.enabled   = $('cfgBrokerEnabled').checked;
+  LiveBroker.accountId = $('cfgBrokerAccountId').value.trim();
+  LiveBroker.token     = $('cfgBrokerToken').value.trim();
+  LiveBroker.region    = $('cfgBrokerRegion').value;
+  LiveBroker.symbol    = $('cfgBrokerSymbol').value.trim() || 'XAUUSDm';
+  const feedSourceChanged = LiveBroker.enabled !== _brokerEnabledBeforeSave;
+  LiveBroker.save();
+  updateModeBadge();
+  if (feedSourceChanged) {
+    addSignal('info', `Switching price feed to ${LiveBroker.enabled ? 'Exness (MetaApi)' : 'Binance'}...`, null);
+    connect();
+  }
   updateStatsStrip(); updateTargetBar(); updateDepositNotice();
   const saved=$('settingsSaved');
   saved.style.opacity='1';
@@ -7366,12 +7726,149 @@ function _handleBinanceMsg(msg) {
   }
 }
 
-// ── PRIMARY CONNECT — Binance public API (primary and only data source) ──
+// ── EXNESS LIVE FEED ENGINE (via MetaApi) ──────────────────────────────────
+// Used instead of the Binance/PAXG feed whenever Live Trading is on, so the
+// price the bot reacts to matches what your broker is actually quoting.
+// This is REST polling, not a true tick-by-tick WebSocket stream — MetaApi's
+// real streaming API uses a stateful socket.io-based synchronization
+// protocol meant for their Node/Python SDK, which isn't practical to
+// reimplement by hand from raw fetch calls. Polling is a close approximation
+// and is what this bot's own decision loop needs anyway (it evaluates
+// per-minute candles).
+const EXNESS_TF_MAP = { 60: '1m', 300: '5m', 900: '15m' };
+let _exPollTimer = null;
+let _exPollFailures = 0;
+
+async function _exFetchCandles(gran, count) {
+  const tf = EXNESS_TF_MAP[gran];
+  const rows = await LiveBroker.getHistoricalCandles(tf, count);
+  return (rows || [])
+    .map(c => ({ epoch: Math.floor(new Date(c.time).getTime() / 1000), low: +c.low, high: +c.high, open: +c.open, close: +c.close }))
+    .sort((a, b) => a.epoch - b.epoch);
+}
+
+async function _exLoadHistory() {
+  const specs = [[60, 500, '1min'], [300, 200, '5min'], [900, 100, '15min']];
+  for (const [gran, count, label] of specs) {
+    try {
+      const arr = await _exFetchCandles(gran, count);
+      if (btFetching) continue;
+      if (arr.length) {
+        candles[gran] = arr;
+        addSignal('info', `${arr.length} ${label} candles loaded from Exness`, null);
+        drawChart();
+        if (gran === 60 && _gapCheckPending) _scanGapPositions();
+      } else {
+        addSignal('warn', `Exness returned 0 ${label} candles — keeping existing chart data`, null);
+      }
+    } catch (e) {
+      // Non-fatal: keep whatever candles are already loaded (e.g. from Binance
+      // at boot) rather than blanking the chart if this endpoint/timeframe
+      // format needs adjusting for your account.
+      addSignal('warn', `Exness history load failed (${label}): ${e.message}`, null);
+    }
+  }
+}
+
+function _handleExnessPrice(priceObj) {
+  if (typeof replay !== 'undefined' && replay.active) return;
+  const newBid = +priceObj.bid, newAsk = +priceObj.ask;
+  if (!newBid || !newAsk) return;
+  const newMid = (newBid + newAsk) / 2;
+  const epochSec = priceObj.time ? Math.floor(new Date(priceObj.time).getTime() / 1000) : Math.floor(Date.now() / 1000);
+
+  if (mid && newMid !== mid) {
+    const diff = newMid - mid, dir = diff > 0 ? 'up' : 'dn';
+    const chgEl = $('priceChg');
+    chgEl.textContent = `${diff > 0 ? '+' : ''}${diff.toFixed(2)}`;
+    chgEl.className   = `price-chg ${dir}`;
+    flashPrice(dir);
+  }
+  bid = newBid; ask = newAsk;
+  prevMid = mid; mid = newMid;
+  $('priceMain').textContent = mid.toFixed(2);
+  updatePriceBadges(bid, ask);
+
+  _processTick(newMid, epochSec);
+  checkDemoPositions();
+  if (!replay.active) runStrategy();
+}
+
+const EXNESS_POLL_BASE_MS = 1500;
+const EXNESS_POLL_MAX_MS  = 15000; // cap backoff so a stuck feed still checks periodically
+let _exPollIntervalMs = EXNESS_POLL_BASE_MS;
+let _exHistoryRefreshCounter = 0;
+
+function _exScheduleNextPoll() {
+  if (_exPollTimer) clearTimeout(_exPollTimer);
+  _exPollTimer = setTimeout(() => _pollExnessPrice(), _exPollIntervalMs);
+}
+
+async function _pollExnessPrice() {
+  try {
+    const p = await LiveBroker.getCurrentPrice();
+    _handleExnessPrice(p);
+    if (_exPollFailures > 0) { addSignal('info', 'Exness feed recovered', null); }
+    _exPollFailures = 0;
+    _exPollIntervalMs = EXNESS_POLL_BASE_MS;
+    setConn('on');
+    // Candles only need refreshing occasionally, not every 1.5s tick — every
+    // ~60 successful polls (~90s) re-pull the latest M1/M5/M15 bars so a
+    // freshly-closed candle shows up without re-fetching full history each time.
+    _exHistoryRefreshCounter++;
+    if (_exHistoryRefreshCounter >= 60) {
+      _exHistoryRefreshCounter = 0;
+      _exLoadHistory().catch(() => {});
+    }
+  } catch (e) {
+    _exPollFailures++;
+    // Back off exponentially (capped) so a down endpoint doesn't get hammered
+    // once a second forever; recovers to the base interval as soon as a poll
+    // succeeds again above.
+    _exPollIntervalMs = Math.min(EXNESS_POLL_MAX_MS, EXNESS_POLL_BASE_MS * Math.pow(1.6, Math.min(_exPollFailures, 8)));
+    setConn(_exPollFailures >= 6 ? 'off' : 'wait');
+    if (_exPollFailures === 1 || _exPollFailures % 10 === 0) {
+      addSignal('warn', `Exness feed poll failed (attempt ${_exPollFailures}, retrying in ${(_exPollIntervalMs / 1000).toFixed(1)}s): ${e.message}`, null);
+    }
+  }
+  _exScheduleNextPoll();
+}
+
+function _connectExnessFeed() {
+  if (_exPollTimer) { clearTimeout(_exPollTimer); _exPollTimer = null; }
+  if (_binanceWS) { try { _binanceWS.close(); } catch(_) {} _binanceWS = null; }
+  if (_binanceReconnectTimer) { clearTimeout(_binanceReconnectTimer); _binanceReconnectTimer = null; }
+
+  addSignal('info', 'Connecting to Exness live feed via MetaApi...', null);
+  setConn('wait');
+
+  if (!LiveBroker.configured()) {
+    addSignal('warn', 'Exness feed requested but broker isn\'t configured — falling back to Binance', null);
+    _connectBinance();
+    return;
+  }
+
+  _exLoadHistory();
+  _exPollFailures = 0;
+  _exPollIntervalMs = EXNESS_POLL_BASE_MS;
+  _exHistoryRefreshCounter = 0;
+
+  // First price immediately, then keep polling — interval self-adjusts on
+  // failure (see _pollExnessPrice), so no fixed setInterval here.
+  _pollExnessPrice().then(() => {
+    authed = true;
+    addSignal('info', `Exness connected — ${LiveBroker.symbol} live feed active`, null);
+  });
+}
+
+// ── PRIMARY CONNECT — Binance (demo) or Exness via MetaApi (live) ──
 function connect() {
   if (_binanceWS) { try { _binanceWS.close(); } catch(_) {} _binanceWS = null; }
   if (_binanceReconnectTimer) { clearTimeout(_binanceReconnectTimer); _binanceReconnectTimer = null; }
+  if (_exPollTimer) { clearTimeout(_exPollTimer); _exPollTimer = null; }
   setConn('wait');
-  _connectBinance();
+  if (LiveBroker.enabled) { _connectExnessFeed(); }
+  else { _connectBinance(); }
 }
 
 
@@ -7546,20 +8043,117 @@ document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeDrawer(); })
 // ── STORAGE ──
 const Storage = {
   db: null,
+  DB_VERSION: 2,
+  _initPromise: null,
   init() {
-    return new Promise((resolve, reject) => {
-      const req = indexedDB.open('PA_BOT_DB', 1);
-      req.onupgradeneeded = e => { e.target.result.createObjectStore('trades', { keyPath: 'id' }); };
+    if (this._initPromise) return this._initPromise;
+    this._initPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open('PA_BOT_DB_XAU', this.DB_VERSION);
+      req.onupgradeneeded = e => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains('trades')) db.createObjectStore('trades', { keyPath: 'id' });
+        // Local cache of fetched backtest candles, keyed by "<granularity>:<zero-padded
+        // epoch>" so an IDBKeyRange.bound range query sorts the same as numeric epoch
+        // order. Lets repeat/overlapping backtests skip re-downloading history they
+        // already have.
+        if (!db.objectStoreNames.contains('candles')) db.createObjectStore('candles', { keyPath: 'k' });
+        // Tracks which [start,end] epoch ranges are FULLY cached per granularity, so a
+        // new request only needs to fetch the gaps not yet covered.
+        if (!db.objectStoreNames.contains('candleCoverage')) db.createObjectStore('candleCoverage', { keyPath: 'granularity' });
+      };
       req.onsuccess = () => { this.db = req.result; resolve(); };
-      req.onerror = () => { addSignal('warn','IndexedDB failed — trade history will not persist',null); reject(); };
+      req.onerror = () => { addSignal('warn','IndexedDB failed — trade history and candle cache will not persist',null); reject(req.error); };
     });
+    return this._initPromise;
+  },
+  async _ready() {
+    if (this.db) return true;
+    try { await this.init(); } catch (e) { return false; }
+    return !!this.db;
   },
   saveTrade(trade) {
     if (!this.db) return;
     const tx = this.db.transaction('trades', 'readwrite');
     tx.objectStore('trades').put(trade);
-  }
+  },
+
+  // ── Candle cache ──
+  _padEpoch(e) { return String(e).padStart(12, '0'); },
+  async getCandleCoverage(granularity) {
+    if (!(await this._ready())) return [];
+    return new Promise(resolve => {
+      const tx = this.db.transaction('candleCoverage', 'readonly');
+      const req = tx.objectStore('candleCoverage').get(granularity);
+      req.onsuccess = () => resolve((req.result && req.result.ranges) || []);
+      req.onerror = () => resolve([]);
+    });
+  },
+  async setCandleCoverage(granularity, ranges) {
+    if (!(await this._ready())) return;
+    return new Promise(resolve => {
+      const tx = this.db.transaction('candleCoverage', 'readwrite');
+      tx.objectStore('candleCoverage').put({ granularity, ranges });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  },
+  async putCandles(granularity, candleArr) {
+    if (!candleArr.length || !(await this._ready())) return;
+    return new Promise(resolve => {
+      const tx = this.db.transaction('candles', 'readwrite');
+      const store = tx.objectStore('candles');
+      for (const c of candleArr) {
+        store.put({ k: `${granularity}:${this._padEpoch(c.epoch)}`, epoch: c.epoch, low: c.low, high: c.high, open: c.open, close: c.close });
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  },
+  async getCandlesInRange(granularity, startEpoch, endEpoch) {
+    if (!(await this._ready())) return [];
+    return new Promise(resolve => {
+      const tx = this.db.transaction('candles', 'readonly');
+      const range = IDBKeyRange.bound(`${granularity}:${this._padEpoch(startEpoch)}`, `${granularity}:${this._padEpoch(endEpoch)}`);
+      const req = tx.objectStore('candles').openCursor(range);
+      const out = [];
+      req.onsuccess = e => {
+        const cursor = e.target.result;
+        if (cursor) { out.push({ epoch: cursor.value.epoch, low: cursor.value.low, high: cursor.value.high, open: cursor.value.open, close: cursor.value.close }); cursor.continue(); }
+        else resolve(out);
+      };
+      req.onerror = () => resolve(out);
+    });
+  },
 };
+
+// Interval helpers for the candle cache's coverage tracking — pure functions,
+// no IndexedDB access.
+function _rangesSubtract(reqStart, reqEnd, covered) {
+  const sorted = [...covered].sort((a, b) => a.start - b.start);
+  const gaps = [];
+  let cursor = reqStart;
+  for (const r of sorted) {
+    if (r.end < cursor) continue;
+    if (r.start > reqEnd) break;
+    if (r.start > cursor) gaps.push({ start: cursor, end: Math.min(r.start - 1, reqEnd) });
+    cursor = Math.max(cursor, r.end + 1);
+    if (cursor > reqEnd) break;
+  }
+  if (cursor <= reqEnd) gaps.push({ start: cursor, end: reqEnd });
+  return gaps;
+}
+function _rangesMerge(covered, addRange) {
+  const all = [...covered, addRange].sort((a, b) => a.start - b.start);
+  const merged = [];
+  for (const r of all) {
+    if (merged.length && r.start <= merged[merged.length - 1].end + 1) {
+      merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, r.end);
+    } else {
+      merged.push({ ...r });
+    }
+  }
+  return merged;
+}
 
 // ════════════════════════════════════════════════════════════
 //  VISUAL BAR REPLAY ENGINE
@@ -8765,7 +9359,260 @@ function btCheckReady() {
   $(id).addEventListener('input', btCheckReady);
 });
 
+// ── BACKTEST DATA — Exness (MetaApi) first, Binance fills whatever's older
+// than the broker's available history ──────────────────────────────────────
+// MT5/MT4 gold CFD symbols usually only carry a limited window of M1 history
+// server-side (often months, not years), so a long backtest range typically
+// gets its recent portion from real Exness quotes (what live trading
+// actually sees) and its older portion backfilled from Binance's PAXG proxy
+// history. Only M1 (granularity 60) is ever requested by the backtest UI.
+const EXNESS_BT_TF_MAP = { 60: '1m', 300: '5m', 900: '15m' };
+
+async function _fetchExnessBtPage(tf, beforeEpoch, limit) {
+  const startTimeIso = new Date(beforeEpoch * 1000).toISOString();
+  const rows = await LiveBroker.getHistoricalCandles(tf, limit, startTimeIso);
+  return (rows || [])
+    .map(c => ({ epoch: Math.floor(new Date(c.time).getTime() / 1000), low: +c.low, high: +c.high, open: +c.open, close: +c.close }))
+    .filter(c => Number.isFinite(c.epoch) && Number.isFinite(c.low) && Number.isFinite(c.high) && Number.isFinite(c.open) && Number.isFinite(c.close));
+}
+
+// Pages backward from endEpoch until it either reaches startEpoch, runs out
+// of broker history, or hits a hard page cap. Returns whatever it managed to
+// collect (possibly a partial range) — the caller decides whether to
+// backfill the rest from Binance.
+async function _fetchExnessBtRange(granularity, startEpoch, endEpoch, onProgress) {
+  const tf = EXNESS_BT_TF_MAP[granularity];
+  if (!tf || !LiveBroker.configured()) return null;
+
+  const expectedBars = Math.max(1, Math.ceil((endEpoch - startEpoch) / granularity));
+  const seen = new Set();
+  const collected = [];
+  let cursor = endEpoch;
+  let pages = 0;
+  const MAX_PAGES = 400; // 400 × 1000 M1 bars ≈ 9.2 months — comfortably past what MT gold history usually holds
+
+  while (cursor > startEpoch && pages < MAX_PAGES) {
+    if (btCancelled) break;
+    pages++;
+    let page;
+    try {
+      page = await _fetchExnessBtPage(tf, cursor, 1000);
+    } catch (e) {
+      addSignal('warn', `Exness BT page failed: ${e.message}`, null);
+      break;
+    }
+    if (!page.length) break; // broker has no more history this far back
+
+    let oldestInPage = cursor;
+    for (const c of page) {
+      if (c.epoch < oldestInPage) oldestInPage = c.epoch;
+      if (c.epoch >= startEpoch && c.epoch <= endEpoch && !seen.has(c.epoch)) {
+        seen.add(c.epoch);
+        collected.push(c);
+      }
+    }
+    if (onProgress) onProgress(Math.min(collected.length, expectedBars), expectedBars);
+    if (oldestInPage >= cursor) break; // no progress this page — avoid an infinite loop
+    cursor = oldestInPage - granularity;
+  }
+
+  collected.sort((a, b) => a.epoch - b.epoch);
+  return { candles: collected, oldestCovered: collected.length ? collected[0].epoch : endEpoch };
+}
+
+// Exness (MetaApi) history-read is safe to use for backtest data any time
+// the broker credentials are filled in — it's a plain GET of historical
+// candles, it never places an order, so it doesn't need the "Live Trading"
+// toggle (that toggle only gates real order placement + the live price
+// feed). This is what makes the two sources genuine fallbacks for each
+// other: whichever one is configured/reachable gets used, and if the
+// preferred source fails outright, the other one is tried for the full
+// range before giving up.
+async function _fetchBtRangeFromBroker(granularity, startEpoch, endEpoch, onProgress) {
+  const exnessAvailable = LiveBroker.configured() && !!EXNESS_BT_TF_MAP[granularity];
+  // Prefer Exness first only when it's the actively-connected live feed
+  // (matches what live trading is actually seeing). Otherwise Binance goes
+  // first since it needs no credentials and has much deeper history —
+  // Exness is then the fallback if Binance comes back empty/short.
+  const preferExnessFirst = exnessAvailable && LiveBroker.enabled && LiveBroker.connectionStatus === 'CONNECTED';
+
+  async function tryExness(fromEpoch, toEpoch, onP) {
+    if (!exnessAvailable) return null;
+    addSignal('info', 'BT: fetching history from Exness (MetaApi)...', null);
+    try {
+      const out = await _fetchExnessBtRange(granularity, fromEpoch, toEpoch, onP);
+      if (out && out.candles.length) return out;
+      addSignal('warn', 'Exness returned no usable BT history for this range', null);
+      return null;
+    } catch (e) {
+      addSignal('warn', `Exness BT history failed: ${e.message}`, null);
+      return null;
+    }
+  }
+
+  async function tryBinance(fromEpoch, toEpoch, onP) {
+    addSignal('info', 'BT: fetching history from Binance...', null);
+    try {
+      const bars = await _fetchBinanceBtCandles(granularity, fromEpoch, toEpoch, onP);
+      return bars || [];
+    } catch (e) {
+      addSignal('warn', `Binance BT history failed: ${e.message}`, null);
+      return [];
+    }
+  }
+
+  if (preferExnessFirst) {
+    const exOut = await tryExness(startEpoch, endEpoch, onProgress);
+    if (btCancelled) return exOut ? exOut.candles : [];
+
+    if (exOut) {
+      // Exness covered the whole requested range (its oldest bar reaches at
+      // or before startEpoch) — no need to touch Binance at all.
+      if (exOut.oldestCovered <= startEpoch + granularity) {
+        addSignal('info', `${exOut.candles.length} M1 candles loaded from Exness (MetaApi) for backtest`, null);
+        return exOut.candles;
+      }
+      // Partial coverage — the broker's history runs out somewhere inside
+      // the requested range. Backfill everything older than that from
+      // Binance and merge the two.
+      const gapEnd = exOut.oldestCovered - granularity;
+      addSignal('info', `Exness history only reaches back to ${new Date(exOut.oldestCovered * 1000).toISOString().slice(0, 10)} — filling the rest from Binance`, null);
+      const bnFill = await tryBinance(startEpoch, gapEnd, onProgress);
+      const merged = bnFill.concat(exOut.candles);
+      merged.sort((a, b) => a.epoch - b.epoch);
+      const dedup = merged.filter((c, i, arr) => i === 0 || c.epoch !== arr[i - 1].epoch);
+      addSignal('info', `${exOut.candles.length} bars from Exness + ${bnFill.length} bars from Binance = ${dedup.length} total M1 candles`, null);
+      return dedup;
+    }
+    // Exness failed completely — fall all the way back to Binance for the
+    // full range, same as the non-preferred path below.
+    addSignal('warn', 'Exness unavailable — falling back to Binance for the full range', null);
+    return tryBinance(startEpoch, endEpoch, onProgress);
+  }
+
+  // Binance first.
+  const bnOut = await tryBinance(startEpoch, endEpoch, onProgress);
+  if (btCancelled) return bnOut;
+
+  const expectedBars = Math.max(1, Math.ceil((endEpoch - startEpoch) / granularity));
+  const binanceGotEnough = bnOut.length >= expectedBars * 0.5;
+  if (binanceGotEnough || !exnessAvailable) {
+    return bnOut;
+  }
+
+  // Binance came back short (rate-limited, blocked, or genuinely down) and
+  // Exness credentials exist — use Exness as the fallback source instead of
+  // just returning a partial/empty result.
+  addSignal('warn', `Binance only returned ${bnOut.length}/${expectedBars} bars — trying Exness (MetaApi) as fallback`, null);
+  const exOut = await tryExness(startEpoch, endEpoch, onProgress);
+  if (!exOut) return bnOut; // both failed — return whatever partial Binance data we have
+
+  // Merge whatever Binance did get with Exness's coverage, in case they
+  // cover slightly different parts of the range.
+  const merged = bnOut.concat(exOut.candles);
+  merged.sort((a, b) => a.epoch - b.epoch);
+  const dedup = merged.filter((c, i, arr) => i === 0 || c.epoch !== arr[i - 1].epoch);
+  addSignal('info', `${exOut.candles.length} bars from Exness + ${bnOut.length} bars from Binance = ${dedup.length} total M1 candles`, null);
+  return dedup;
+}
+
+// ── TOP-LEVEL BACKTEST FETCH — cache-first ──────────────────────────────────
+// Candles are cached locally (IndexedDB) with their covered epoch ranges
+// tracked, so a second backtest over the same — or an overlapping — date
+// range only fetches whatever portion isn't already cached.
 async function fetchBtCandles(granularity, startEpoch, endEpoch, onProgress) {
+  btFetching = true;
+  try {
+    const totalBars = Math.max(1, Math.ceil((endEpoch - startEpoch) / granularity) + 1);
+    let covered = [];
+    try { covered = await Storage.getCandleCoverage(granularity); } catch (e) {}
+    let gaps = _rangesSubtract(startEpoch, endEpoch, covered);
+
+    if (!gaps.length) {
+      // Coverage claims the whole range is already cached — verify that
+      // before trusting it. A stale coverage record (see the completeness
+      // check below — this is the fix for it, but a bad record written
+      // before this fix may already be sitting in IndexedDB) would otherwise
+      // make every future backtest over this range silently pull back the
+      // same too-few candles from the cache and fail with "insufficient
+      // data" forever, with no way to recover short of manually clearing
+      // site data. Self-heal instead: if what's actually stored falls well
+      // short of what the range should hold, wipe the coverage record for
+      // it and fall through to a real re-fetch.
+      const cached = await Storage.getCandlesInRange(granularity, startEpoch, endEpoch);
+      if (cached.length >= totalBars * 0.5) {
+        addSignal('info', 'BT data: entire range already cached locally — no network fetch needed', null);
+        if (onProgress) onProgress(1, 1);
+        return cached;
+      }
+      addSignal('warn', `BT cache looked complete but only had ${cached.length}/${totalBars} bars — clearing the stale cache record and re-fetching`, null);
+      try {
+        const purged = covered.filter(r => r.end < startEpoch || r.start > endEpoch);
+        await Storage.setCandleCoverage(granularity, purged);
+      } catch (e) {}
+      gaps = [{ start: startEpoch, end: endEpoch }];
+    }
+
+    const gapBars = gaps.reduce((s, g) => s + Math.max(1, Math.ceil((g.end - g.start) / granularity)), 0);
+    const cachedBars = Math.max(0, totalBars - gapBars);
+    if (cachedBars > 0) {
+      addSignal('info', `BT data: ${cachedBars.toLocaleString()} of ${totalBars.toLocaleString()} bars already cached locally — fetching only the missing ${gapBars.toLocaleString()}`, null);
+    }
+
+    const freshlyFetched = []; // safety net — see the Storage.getCandlesInRange fallback below
+    let doneBarsBeforeCurrentGap = 0;
+    for (const gap of gaps) {
+      if (btCancelled) break;
+      const gapExpected = Math.max(1, Math.ceil((gap.end - gap.start) / granularity));
+      const bars = await _fetchBtRangeFromBroker(granularity, gap.start, gap.end, (completed, total) => {
+        const scaled = total > 0 ? (completed / total) * gapExpected : 0;
+        if (onProgress) onProgress(Math.min(totalBars, cachedBars + doneBarsBeforeCurrentGap + scaled), totalBars);
+      });
+      if (bars && bars.length) {
+        freshlyFetched.push(...bars);
+        try {
+          await Storage.putCandles(granularity, bars);
+          if (!btCancelled) {
+            // Only record the FULL gap as covered once we actually got
+            // (essentially) every bar in it. Marking a partial/rate-limited
+            // fetch as fully covered is exactly what poisons the cache and
+            // causes "insufficient data" to keep failing forever, even after
+            // the underlying network/broker problem is gone — the app never
+            // tries fetching the missing part again because it believes it
+            // already has it.
+            const completeness = bars.length / gapExpected;
+            if (completeness >= 0.98) {
+              const newCoverage = _rangesMerge(await Storage.getCandleCoverage(granularity), { start: gap.start, end: gap.end });
+              await Storage.setCandleCoverage(granularity, newCoverage);
+            } else {
+              addSignal('warn', `BT data: only ${bars.length}/${gapExpected} bars fetched for part of the range — NOT marking it as fully cached, will retry the missing bars next run`, null);
+            }
+          }
+        } catch (e) {}
+      }
+      doneBarsBeforeCurrentGap += gapExpected;
+    }
+
+    if (onProgress) onProgress(totalBars, totalBars);
+    try {
+      return await Storage.getCandlesInRange(granularity, startEpoch, endEpoch);
+    } catch (e) {
+      // If the local cache read itself fails (IndexedDB hiccup) we'd
+      // otherwise lose every bar the network calls above just fetched.
+      // Fall back to whatever was collected this run instead of throwing
+      // the whole backtest into the generic top-level error.
+      addSignal('warn', `BT: local cache read failed (${e.message}) — using freshly-fetched bars only`, null);
+      const dedup = freshlyFetched
+        .sort((a, b) => a.epoch - b.epoch)
+        .filter((c, i, arr) => i === 0 || c.epoch !== arr[i - 1].epoch);
+      return dedup;
+    }
+  } finally {
+    btFetching = false;
+  }
+}
+
+async function _fetchBinanceBtCandles(granularity, startEpoch, endEpoch, onProgress) {
   // Fetches historical OHLC candles from Binance's public REST klines API for
   // backtest.
   //
@@ -8812,7 +9659,6 @@ async function fetchBtCandles(granularity, startEpoch, endEpoch, onProgress) {
   const CONCURRENCY = 24; // parallel in-flight requests, split across both hosts below
   const results = new Array(pageStarts.length);
   let completedPages = 0;
-  btFetching = true;
 
   // Fetch one page. Uses fetch() with a manual timeout so a stalled request
   // doesn't hang the pool indefinitely. hostIdx round-robins across
@@ -8832,11 +9678,24 @@ async function fetchBtCandles(granularity, startEpoch, endEpoch, onProgress) {
         if (!res.ok) {
           // Surface Retry-After (present on a real 429) so the retry loop
           // can back off exactly as long as Binance actually asked for,
-          // instead of guessing with a fixed exponential delay.
+          // instead of guessing with a fixed exponential delay. Also read
+          // the response body so the signal feed shows *why* (Binance puts
+          // the real reason in a JSON {"msg": "..."} body) instead of just a
+          // bare status code.
           const retryAfter = res.status === 429 ? parseFloat(res.headers.get('Retry-After')) : null;
-          const err = new Error(`HTTP ${res.status}`);
-          err.retryAfterMs = retryAfter && !isNaN(retryAfter) ? retryAfter * 1000 : null;
-          reject(err);
+          res.text().then(body => {
+            let detail = '';
+            try { const j = JSON.parse(body); detail = j.msg || j.message || j.error || ''; } catch (_) { detail = (body || '').slice(0, 120); }
+            const err = new Error(`HTTP ${res.status}${detail ? ' — ' + detail : ''}`);
+            err.status = res.status;
+            err.retryAfterMs = retryAfter && !isNaN(retryAfter) ? retryAfter * 1000 : null;
+            reject(err);
+          }).catch(() => {
+            const err = new Error(`HTTP ${res.status}`);
+            err.status = res.status;
+            err.retryAfterMs = retryAfter && !isNaN(retryAfter) ? retryAfter * 1000 : null;
+            reject(err);
+          });
           return;
         }
         return res.json();
@@ -8850,21 +9709,28 @@ async function fetchBtCandles(granularity, startEpoch, endEpoch, onProgress) {
       .catch(e => { clearTimeout(timer); reject(e); });
   });
 
-  // Retry a single page up to 3 times so a transient connection drop or rate
+  // Retry a single page up to 4 times so a transient connection drop or rate
   // limit doesn't abort the whole fetch — but doesn't block any other
   // in-flight page while it retries. A 429 honors Binance's own Retry-After
-  // header; any other error falls back to a short exponential back-off.
+  // header; anything else backs off exponentially (with jitter) instead of a
+  // short fixed delay, which is too quick to recover from a real rate-limit
+  // window. A non-retryable 400/401/404 (a params bug or bad symbol, not a
+  // transient failure) fails fast after one try instead of burning three
+  // more identical attempts.
   const fetchWithRetry = async (pageStartMs, pageIdx, hostIdx) => {
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    const MAX_ATTEMPTS = 4;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       if (btCancelled) return [];
       try {
         return await fetchPage(pageStartMs, hostIdx);
       } catch (e) {
-        if (attempt === 3) {
+        const nonRetryable = e.status === 400 || e.status === 401 || e.status === 404;
+        if (attempt === MAX_ATTEMPTS || nonRetryable) {
           addSignal('warn', `BT fetch error (page ${pageIdx + 1}/${pageStarts.length}): ${e.message}`, null);
           return [];
         }
-        await new Promise(r => setTimeout(r, e.retryAfterMs || 400 * attempt));
+        const backoff = e.retryAfterMs || (700 * Math.pow(2, attempt - 1)) + Math.random() * 300;
+        await new Promise(r => setTimeout(r, backoff));
       }
     }
     return [];
@@ -8883,8 +9749,9 @@ async function fetchBtCandles(granularity, startEpoch, endEpoch, onProgress) {
   try {
     const poolSize = Math.min(CONCURRENCY, pageStarts.length) || 1;
     await Promise.all(Array.from({ length: poolSize }, (_, i) => worker(i)));
-  } finally {
-    btFetching = false;
+  } catch (e) {
+    // worker() itself never throws (fetchWithRetry swallows per-page errors),
+    // but keep this belt-and-braces so a future change can't silently hang btFetching.
   }
 
   const all = results.flat().filter(Boolean);
@@ -8961,13 +9828,31 @@ async function startBacktest() {
   $('btProgressWrap').style.display = 'block';
   $('btResults').style.display = 'none';
   setBtProgress(2, `Fetching ${btSelectedDays} day(s) of historical candles…`);
-  const m1All = await fetchBtCandles(60, startEpoch, endEpoch, (completed, total) => {
-    const pct = total > 0 ? completed / total : 0;
-    setBtProgress(Math.min(35, 2 + pct * 33), `Fetching candles… ${completed}/${total} pages`);
-  });
+  let m1All;
+  try {
+    m1All = await fetchBtCandles(60, startEpoch, endEpoch, (completed, total) => {
+      const pct = total > 0 ? completed / total : 0;
+      setBtProgress(Math.min(35, 2 + pct * 33), `Fetching candles… ${completed}/${total} pages`);
+    });
+  } catch (e) {
+    // Previously uncaught — any error thrown out of the fetch chain (a
+    // broker/exchange failure that slipped past its own try/catch, an
+    // IndexedDB error, etc.) left the Run button disabled and the progress
+    // bar frozen on "Fetching candles…" forever, with nothing telling the
+    // user it had actually died. Surface it and reset the UI instead. Also
+    // log the full error (with stack) to the console — the on-screen signal
+    // only shows e.message, which is often too short to diagnose.
+    console.error('Backtest data fetch failed:', e);
+    addSignal('warn', `Backtest data fetch failed: ${e.message}`, null);
+    setBtProgress(100, `Error: ${e.message}`);
+    return finishBt(false);
+  }
 
-  if (btCancelled || !m1All || m1All.length < 120) {
-    setBtProgress(100, 'Error: insufficient data');
+  if (btCancelled) return finishBt(false);
+  if (!m1All || m1All.length < 120) {
+    const got = m1All ? m1All.length : 0;
+    addSignal('warn', `Backtest: only ${got} M1 candles available for this range (need at least 120) — tried Binance${LiveBroker.configured() ? ' and Exness (MetaApi)' : ''}, both came back short. Check your network connection${LiveBroker.configured() ? ' and the broker credentials in Settings' : ''}`, null);
+    setBtProgress(100, `Error: insufficient data (${got} candles)`);
     return finishBt(false);
   }
 

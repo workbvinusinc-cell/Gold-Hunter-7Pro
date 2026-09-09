@@ -728,12 +728,12 @@ input[type=range]::-webkit-slider-thumb{
       <div class="gate-note">Re-evaluated once per closed M1 candle, exactly like the source EA's OnTick(). Entry, stop-loss, lot sizing, trailing stop, and daily lock all use the values from Settings → MQL5 HFT EA Settings.</div>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">Live Feed — Coinbase API</div>
+      <div class="settings-section-title">Live Feed — Binance API</div>
       <div class="demo-notice">
-        <strong>✅ COINBASE FEED ACTIVE</strong>
-        Live XAU/USD bid/ask ticks stream free from Coinbase's public WebSocket via PAXG
+        <strong>✅ BINANCE FEED ACTIVE</strong>
+        Live XAU/USD bid/ask ticks stream free from Binance's public WebSocket via PAXG
         (PAX Gold — a token redeemable 1:1 for physical gold, tightly tracking
-        spot XAU/USD; product PAXG-USD). No API key required — click Connect to start.
+        spot XAU/USD; product PAXG/USDT, the most liquid PAXG market). No API key required — click Connect to start.
       </div>
       <button class="btn btn-auth" id="authBtn" style="margin-top:8px">Connect</button>
 
@@ -985,7 +985,7 @@ input[type=range]::-webkit-slider-thumb{
           Spread: $0.10–$0.28 typical · Asian: ~$0.28 · NY/LON overlap: ~$0.15 · News spike: ~$1.00+ (Exness Raw Spread XAUUSD baseline)<br>
           Slippage: $0–$0.12 base, scaled up by order size and current volatility · Execution: 20–120 ms (simulated in both live and backtest fills) · Commission $7/lot round turn (Raw Spread) · Leverage and spread guard set above<br>
           Swap: -$53.20/lot/day long, $0 short, tripled Wednesday (live Exness XAUUSD spec) — only applies if a trade is held across a daily rollover<br>
-          Data: Coinbase PAXG-USD WebSocket (PAX Gold, tracks spot XAU/USD) · lots adjust x0.60–x1.20 by news impact
+          Data: Binance PAXG/USDT WebSocket (PAX Gold, tracks spot XAU/USD) · lots adjust x0.60–x1.20 by news impact
         </div>
       </div>
     </div>
@@ -1199,7 +1199,7 @@ input[type=range]::-webkit-slider-thumb{
   </div>
   <div class="drawer-body">
     <div class="bt-summary-note">
-      Replays your strategy on real historical XAUUSD data (via PAXG/Coinbase, tracking spot gold). Uses the identical momentum-breakout + quality-score engine and risk management as live mode — no data advantage, no repainting. M5 trend bias + M1 execution. Trades appear on chart during replay.<br><br>
+      Replays your strategy on real historical XAUUSD data (via PAXG/Binance, tracking spot gold). Uses the identical momentum-breakout + quality-score engine and risk management as live mode — no data advantage, no repainting. M5 trend bias + M1 execution. Trades appear on chart during replay.<br><br>
       <span style="color:var(--gold);font-family:var(--sans);font-size:8px;font-weight:700;letter-spacing:.08em">MARKET SIMULATION ACTIVE:</span><br>
       News-aware trading (ALL news types traded · lots ×0.60 at release · ×1.20 post-release) · Spread: $0.10–$0.28 typical, up to $1.00+ on news spikes (Exness Raw Spread XAUUSD) | Slippage: $0–$0.12 base, scaled up by order size and volatility | Execution delay: 20–120 ms, simulated on every fill | Commission: $7/lot round turn | Swap: -$53.20/lot/day long, tripled Wednesday (live Exness spec, only on trades held across rollover)
     </div>
@@ -1342,34 +1342,50 @@ input[type=range]::-webkit-slider-thumb{
 // ════════════════════════════════════════════════════════════════════════════
 // ── COINBASE PUBLIC API CONFIG ──
 // Free, no API key required. REST candles for historical bars + the public
-// Exchange WebSocket ticker channel for live bid/ask.
+// Exchange WebSocket best-bid/ask stream for live pricing.
 //
-// XAUUSD DATA-FEED NOTE: Coinbase doesn't list a forex/commodity XAU/USD
-// pair. It does list PAXG-USD — PAX Gold, an ERC-20 token where 1 token is
+// XAUUSD DATA-FEED NOTE: no crypto exchange lists a forex/commodity XAU/USD
+// pair directly. PAXG (PAX Gold) is an ERC-20 token where 1 token is
 // redeemable for 1 fine troy ounce of London Good Delivery gold, custodied
 // and audited 1:1 — so its market price tracks spot XAU/USD tightly (small
-// basis/premium only, not a synthetic index). This is a free, no-API-key
-// source that offers true tick-by-tick best bid/ask over WebSocket plus
-// historical M1/M5/M15 candles over REST. All display labels below still
-// read "XAUUSD" — PAXG-USD is purely the wire symbol. Coinbase is the only
-// data source used anywhere in this bot — live feed, historical warm-up,
-// and backtest data all come from Coinbase's public Exchange API.
-const COINBASE_WS_URL   = 'wss://ws-feed.exchange.coinbase.com';
-const COINBASE_REST_BASE = 'https://api.exchange.coinbase.com/products';
-const COINBASE_PRODUCT   = 'PAXG-USD';
+// basis/premium only, not a synthetic index).
+//
+// PREVIOUSLY this used Coinbase's PAXG-USD market. Coinbase's PAXG-USD is
+// thin — long stretches with zero trades — which produced sparse, gappy
+// candles no amount of chart-side smoothing could fix, since the underlying
+// ticks themselves just weren't there. Switched to Binance's PAXG/USDT
+// market instead: it's the most actively-traded PAXG pair by a wide margin
+// (continuous multi-times-per-second book updates instead of sporadic
+// trades), giving genuinely clean, continuous candles. Same free,
+// no-API-key model: WebSocket for live best bid/ask, REST for historical
+// M1/M5/M15 candles and backtest data. All display labels below still read
+// "XAUUSD" — PAXGUSDT is purely the wire symbol. Binance is the only data
+// source used anywhere in this bot now — live feed, historical warm-up, and
+// backtest data all come from Binance's public Spot API.
+//
+// (Internal identifiers below still say "coinbase"/"Coinbase" in places —
+// kept as-is to minimize the size of this change; they all now point at
+// Binance under the hood.)
+const COINBASE_WS_URL    = 'wss://stream.binance.com:9443/ws/paxgusdt@bookTicker';
+const COINBASE_REST_BASE = 'https://api.binance.com/api/v3/klines';
+const COINBASE_PRODUCT   = 'PAXGUSDT';
 const CONTRACT_SIZE = 100;        // 1 lot = 100 troy oz — matches Exness XAUUSD contract spec (Exness Help Center, "Commodities")
 const PRICE_DIGITS  = 2;          // Exness XAUUSD "Digits"/pip-size spec (0.01) — pricing/rounding already uses 2dp throughout
 const POINT_SIZE     = 1 / Math.pow(10, PRICE_DIGITS); // 1 point = $0.01 at 2 digits — used for swap $ conversion below
 
-let _coinbaseWS             = null;  // WebSocket handle — Coinbase live feed
+// Maps our internal granularity-in-seconds to Binance's kline interval strings.
+function _binanceInterval(gran) {
+  return gran === 60 ? '1m' : gran === 300 ? '5m' : gran === 900 ? '15m' : '1m';
+}
+
+let _coinbaseWS             = null;  // WebSocket handle — Binance live feed
 let _coinbaseReconnectTimer = null;
 let _coinbaseWatchdogTimer  = null;  // periodic staleness check — forces a
-                                      // reconnect if no message (ticker OR
-                                      // heartbeat) has arrived recently, even
-                                      // if the socket itself never fires
-                                      // 'close' (a "half-dead" connection).
-let _lastCoinbaseMsgAt      = 0;     // Date.now() of the last WS message of
-                                      // ANY type (ticker or heartbeat).
+                                      // reconnect if no message has arrived
+                                      // recently, even if the socket itself
+                                      // never fires 'close' (a "half-dead"
+                                      // connection).
+let _lastCoinbaseMsgAt      = 0;     // Date.now() of the last WS message.
 
 const CFG = {
   RISK_PCT     : 1.0,
@@ -5636,7 +5652,37 @@ function drawChart(overridePositions = null, overrideMid = null) {
   // solid border for definition, and replace the blurred glow with a crisp
   // flat-color accent bar so displacement candles are still distinguishable
   // without smearing.
+  // ── GAP RUNS — quiet-market filler bars (no real trades in that minute)
+  // used to be drawn as individual bordered candles, all flat at the same
+  // price — a run of those looked like a dotted trail of tiny rectangles,
+  // which is what made the chart look worse, not better. Instead, draw ONE
+  // subtle dashed connector line per contiguous run of filler bars, and
+  // skip them entirely in the main candle loop below. A quiet stretch now
+  // reads as "flat/quiet" instead of visual clutter.
+  let _gapRunStart = null;
+  for (let i = 0; i <= vis.length; i++) {
+    const isGap = i < vis.length && vis[i].gap;
+    if (isGap && _gapRunStart === null) _gapRunStart = i;
+    if (!isGap && _gapRunStart !== null) {
+      const s = _gapRunStart, e = i - 1;
+      const xS = PAD.l + s * slotW + (CANDLE_AREA_W - totalSlots * slotW);
+      const xE = PAD.l + (e + 1) * slotW + (CANDLE_AREA_W - totalSlots * slotW);
+      const y  = toY(vis[s].close);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(130,130,175,0.35)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(xS, y); ctx.lineTo(xE, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+      _gapRunStart = null;
+    }
+  }
+
   vis.forEach((c, i) => {
+    // Quiet-market filler bar — already represented by the dashed connector
+    // line drawn above; skip so it doesn't also render as its own candle.
+    if (c.gap) return;
     const xRaw = PAD.l + (i + 0.5) * slotW + (CANDLE_AREA_W - totalSlots * slotW);
     const bull = c.close >= c.open;
     const bodyColor   = bull ? '#5b8fd6' : '#f0a83c';
@@ -7556,6 +7602,29 @@ function _bucketEpoch(epoch, gran) {
   return Math.floor(epoch / gran) * gran;
 }
 
+// Shared gap-fill: given a sorted array of OHLC bars for one granularity,
+// insert flat (open=high=low=close at the previous close) filler bars for
+// any missing bucket between consecutive real bars. Used both for the REST
+// history load (Coinbase's candle endpoint omits bars for periods with no
+// trades — it does not zero-fill them) and, separately, for the live tick
+// builder. Without this, a quiet stretch just vanishes from the array, so
+// evenly-spaced candle slots on screen stop corresponding to evenly-spaced
+// real time — the "jumpy/messy" chart with wildly uneven x-axis timestamps.
+function _fillCandleGaps(arr, gran, cap) {
+  if (!arr.length) return arr;
+  const out = [arr[0]];
+  for (let i = 1; i < arr.length; i++) {
+    const prev = out[out.length - 1];
+    const cur  = arr[i];
+    const missed = Math.round((cur.epoch - prev.epoch) / gran) - 1;
+    for (let m = 1; m <= missed && m < 2000; m++) {
+      out.push({ epoch: prev.epoch + m * gran, open: prev.close, high: prev.close, low: prev.close, close: prev.close, gap: true });
+    }
+    out.push(cur);
+  }
+  return cap ? out.slice(-cap) : out;
+}
+
 // Feed a mid-price tick into the internal candle builder.
 // Mirrors the Python process_tick() logic.
 function _processTick(midPrice, epochSec) {
@@ -7588,7 +7657,7 @@ function _processTick(midPrice, epochSec) {
           if (missedBuckets > 0 && missedBuckets < 500) {
             for (let i = 1; i <= missedBuckets; i++) {
               const fillEpoch = bar.epoch + i * gran;
-              arr.push({ epoch: fillEpoch, open: bar.close, high: bar.close, low: bar.close, close: bar.close });
+              arr.push({ epoch: fillEpoch, open: bar.close, high: bar.close, low: bar.close, close: bar.close, gap: true });
               if (arr.length > cap) arr.shift();
             }
           }
@@ -7623,50 +7692,57 @@ function _processTick(midPrice, epochSec) {
 }
 
 // ── COINBASE LIVE FEED ENGINE ───────────────────────────────────────────────
-// Coinbase's public Exchange API provides true tick-by-tick best bid/ask on
-// PAXG-USD (PAX Gold, tracking spot XAU/USD) at no cost and with no API key.
-// Historical candles are loaded via a plain REST call to the candles endpoint
-// on connect; live ticks arrive over the public "ticker" WebSocket channel.
-// M1/M5/M15 OHLC bars are built client-side from those ticks by _processTick()
-// (see above) — Coinbase's public feed doesn't push pre-aggregated candles
-// over the ticker channel, so the tick-to-candle builder is the single source
-// of truth for every timeframe, live and on reconnect alike.
+// Binance's public Spot API provides high-frequency best bid/ask on
+// PAXG/USDT (PAX Gold, tracking spot XAU/USD) at no cost and with no API
+// key — and unlike Coinbase's thin PAXG-USD market, Binance's PAXG/USDT is
+// the most actively-traded PAXG pair, so ticks arrive continuously instead
+// of sporadically. Historical candles are loaded via a plain REST call to
+// the klines endpoint on connect; live ticks arrive over the public
+// "bookTicker" WebSocket stream. M1/M5/M15 OHLC bars are built client-side
+// from those ticks by _processTick() (see above) — the bookTicker stream
+// gives best bid/ask only, not pre-aggregated candles, so the tick-to-candle
+// builder is the single source of truth for every timeframe, live and on
+// reconnect alike.
 
 async function _coinbaseLoadHistory() {
   // Load historical OHLC bars for all three timeframes via REST.
-  // Coinbase's candles endpoint caps each request at 300 bars, so the
-  // requested counts below all sit comfortably under that ceiling.
+  // Binance's klines endpoint allows up to 1000 bars per request (vs
+  // Coinbase's 300), so a single request comfortably covers each count below.
   const specs = [[60, 300], [300, 200], [900, 100]];
   for (const [gran, count] of specs) {
     try {
       const endMs   = Date.now();
       const startMs = endMs - count * gran * 1000;
-      const url = `${COINBASE_REST_BASE}/${COINBASE_PRODUCT}/candles?granularity=${gran}&start=${new Date(startMs).toISOString()}&end=${new Date(endMs).toISOString()}`;
+      const url = `${COINBASE_REST_BASE}?symbol=${COINBASE_PRODUCT}&interval=${_binanceInterval(gran)}&startTime=${startMs}&endTime=${endMs}&limit=1000`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       // Guard: do not overwrite the live candles[] while a BT fetch owns
       // pagination against the same public API.
       if (btFetching) continue;
-      // Coinbase candle rows: [time, low, high, open, close, volume] — time
-      // is Unix seconds already. Response order isn't guaranteed, so sort.
-      const arr = data.map(c => ({
-        epoch: Math.floor(c[0]),
-        open : +c[3],
+      // Binance kline rows: [openTime_ms, open, high, low, close, volume,
+      // closeTime_ms, ...]. Already time-ordered, but sort defensively.
+      let arr = data.map(c => ({
+        epoch: Math.floor(c[0] / 1000),
+        open : +c[1],
         high : +c[2],
-        low  : +c[1],
+        low  : +c[3],
         close: +c[4],
       })).sort((a, b) => a.epoch - b.epoch);
+      // Defensive: fill any remaining holes (a genuinely zero-trade minute,
+      // a brief outage, etc.) so the chart's x-axis stays evenly spaced.
+      const cap = gran === 60 ? 300 : gran === 300 ? 200 : 100;
+      arr = _fillCandleGaps(arr, gran, cap);
       if (arr.length) {
         candles[gran] = arr;
         const label = gran === 60 ? '1min' : gran === 300 ? '5min' : '15min';
-        addSignal('info', `${arr.length} ${label} candles loaded from Coinbase`, null);
+        addSignal('info', `${arr.length} ${label} candles loaded from Binance`, null);
         drawChart();
         // After M1 history refreshes on reconnect, scan for gap SL/TP hits
         if (gran === 60 && _gapCheckPending) _scanGapPositions();
       }
     } catch (e) {
-      addSignal('warn', `Coinbase history load failed (${gran}s): ${e.message}`, null);
+      addSignal('warn', `Binance history load failed (${gran}s): ${e.message}`, null);
     }
   }
 }
@@ -7681,7 +7757,9 @@ async function _coinbaseLoadHistory() {
 // Fix: track the time of the LAST message of any kind (ticker OR
 // heartbeat) and, on a periodic check, force a full reconnect if too much
 // time has passed with nothing received — even though the socket's
-// readyState still claims OPEN.
+// readyState still claims OPEN. Binance's PAXG/USDT book updates multiple
+// times per second under normal conditions, so 12s of total silence is a
+// reliable dead-connection signal without a separate heartbeat channel.
 const _COINBASE_STALE_MS = 12000; // no message for 12s → treat as dead
 function _startCoinbaseWatchdog() {
   if (_coinbaseWatchdogTimer) clearInterval(_coinbaseWatchdogTimer);
@@ -7693,7 +7771,7 @@ function _startCoinbaseWatchdog() {
     if (document.hidden) return;
     const silentFor = Date.now() - _lastCoinbaseMsgAt;
     if (_lastCoinbaseMsgAt && silentFor > _COINBASE_STALE_MS) {
-      addSignal('warn', `Coinbase feed stalled (${Math.round(silentFor/1000)}s silent) — forcing reconnect...`, null);
+      addSignal('warn', `Binance feed stalled (${Math.round(silentFor/1000)}s silent) — forcing reconnect...`, null);
       _connectCoinbase();
     }
   }, 4000);
@@ -7703,37 +7781,30 @@ function _connectCoinbase() {
   if (_coinbaseWS) { try { _coinbaseWS.onclose = null; _coinbaseWS.close(); } catch(_) {} _coinbaseWS = null; }
   if (_coinbaseReconnectTimer) { clearTimeout(_coinbaseReconnectTimer); _coinbaseReconnectTimer = null; }
 
-  addSignal('info', `Connecting to Coinbase WebSocket...`, null);
+  addSignal('info', `Connecting to Binance WebSocket...`, null);
   setConn('wait');
 
   // Historical bars load independently over REST — no need to wait for the
   // WebSocket to open first.
   _coinbaseLoadHistory();
 
+  // Connecting directly to the <symbol>@bookTicker raw-stream path
+  // auto-subscribes to just that stream — no subscribe message needed
+  // (unlike Coinbase, which required an explicit subscribe frame).
   const ws = new WebSocket(COINBASE_WS_URL);
   _coinbaseWS = ws;
   _lastCoinbaseMsgAt = Date.now(); // seed so the watchdog doesn't fire instantly
   _startCoinbaseWatchdog();
 
   ws.onopen = () => {
-    ws.send(JSON.stringify({
-      type: 'subscribe',
-      product_ids: [COINBASE_PRODUCT],
-      // 'heartbeat' emits ~once/sec regardless of trade activity, so it's
-      // the liveness signal; 'ticker' emits only when a trade actually
-      // prints (PAXG-USD volume can go quiet for stretches) and is the
-      // price/candle source. Subscribing to both means a long quiet
-      // market no longer looks identical to a dead socket.
-      channels: ['ticker', 'heartbeat'],
-    }));
     setConn('on');
     authed = true;
     _lastCoinbaseMsgAt = Date.now();
-    addSignal('info', `Coinbase connected — ${COINBASE_PRODUCT} (Gold) live tick feed active`, null);
+    addSignal('info', `Binance connected — ${COINBASE_PRODUCT} (Gold) live tick feed active`, null);
   };
 
   ws.onmessage = evt => {
-    _lastCoinbaseMsgAt = Date.now(); // ANY message counts as "alive", not just ticker
+    _lastCoinbaseMsgAt = Date.now(); // ANY message counts as "alive"
     let parsed;
     try { parsed = JSON.parse(evt.data); } catch(e) { return; }
     try {
@@ -7744,7 +7815,7 @@ function _connectCoinbase() {
       // was silent, so a persistently-thrown error (e.g. bad state left
       // over from a prior message) could quietly stop candles/strategy
       // from ever running again with zero indication anything was wrong.
-      console.error('Coinbase message handler error:', e);
+      console.error('Binance message handler error:', e);
       addSignal('warn', `Feed processing error (recovered): ${e.message}`, null);
     }
   };
@@ -7753,7 +7824,7 @@ function _connectCoinbase() {
     _coinbaseWS = null;
     if (_coinbaseWatchdogTimer) { clearInterval(_coinbaseWatchdogTimer); _coinbaseWatchdogTimer = null; }
     setConn('wait');
-    addSignal('warn', `Coinbase disconnected — reconnecting in 5 s...`, null);
+    addSignal('warn', `Binance disconnected — reconnecting in 5 s...`, null);
     _coinbaseReconnectTimer = setTimeout(_connectCoinbase, 5000);
   };
 
@@ -7763,13 +7834,10 @@ function _connectCoinbase() {
 }
 
 function _handleCoinbaseMsg(msg) {
-  if (!msg || msg.product_id !== COINBASE_PRODUCT) return;
-  // Heartbeat messages carry no price — they only exist to keep the
-  // watchdog's "last message" clock ticking during quiet markets. Nothing
-  // else to do with them.
-  if (msg.type === 'heartbeat') return;
-  if (msg.type !== 'ticker') return;
-  // ── BACKTEST REPLAY GUARD — the live Coinbase WS keeps streaming in the
+  // Binance's per-symbol bookTicker raw stream sends bare {u,s,b,B,a,A}
+  // objects (no wrapper, no "type"/"e" field on this single-stream path).
+  if (!msg || msg.s !== COINBASE_PRODUCT) return;
+  // ── BACKTEST REPLAY GUARD — the live WS keeps streaming in the
   // background even while a backtest replay is running (it's never closed),
   // and this handler mutates the SAME globals the replay engine owns every
   // frame: mid/bid/ask and candles[gran]. Without this guard, a live tick
@@ -7783,8 +7851,8 @@ function _handleCoinbaseMsg(msg) {
   if (typeof replay !== 'undefined' && replay.active) return;
 
   // ── Real-time best bid/ask tick ───────────────────────────────
-  const newBid = +msg.best_bid;
-  const newAsk = +msg.best_ask;
+  const newBid = +msg.b;
+  const newAsk = +msg.a;
   // Guard against NaN/0/garbage payloads ever reaching mid/candles — a
   // single malformed tick used to be able to poison `mid` (e.g. to NaN),
   // and every downstream calculation (chart scale, PnL, strategy) would
@@ -7821,7 +7889,7 @@ function _handleCoinbaseMsg(msg) {
   catch (e) { console.error('runStrategy error:', e); }
 }
 
-// ── PRIMARY CONNECT — Coinbase public API (primary and only data source) ──
+// ── PRIMARY CONNECT — Binance public API (primary and only data source) ──
 function connect() {
   if (_coinbaseWS) { try { _coinbaseWS.onclose = null; _coinbaseWS.close(); } catch(_) {} _coinbaseWS = null; }
   if (_coinbaseReconnectTimer) { clearTimeout(_coinbaseReconnectTimer); _coinbaseReconnectTimer = null; }
@@ -9346,29 +9414,30 @@ function btCheckReady() {
 });
 
 async function fetchBtCandles(granularity, startEpoch, endEpoch, onProgress) {
-  // Fetches historical OHLC candles from Coinbase's public REST candles API
+  // Fetches historical OHLC candles from Binance's public REST klines API
   // for backtest.
   //
-  // Coinbase's candles endpoint caps every request at 300 bars per page
-  // (vs. 1000 on some other exchanges), and its public rate limit is a
-  // modest 10 requests/sec per IP (bursts to 15) — both much tighter than
-  // what a crypto-native exchange typically offers. Pages are fetched
+  // Binance's klines endpoint allows up to 1000 bars per request (vs
+  // Coinbase's 300) and a generous public rate limit (weight-based, ~1200
+  // weight/min, klines costs ~2 weight/request), so far fewer pages are
+  // needed and the pool can move faster. Pages are still fetched
   // concurrently through a small worker pool; a page that gets 429'd backs
-  // off and retries (honoring Retry-After when Coinbase sends one) without
+  // off and retries (honoring Retry-After when Binance sends one) without
   // blocking any other in-flight page, so the pool naturally settles onto
   // the sustained rate the API allows rather than stalling on one page.
-  const PAGE_BARS = 300; // Coinbase's hard per-request cap
+  const PAGE_BARS = 1000; // Binance's hard per-request cap
   const pageSpanMs = PAGE_BARS * granularity * 1000;
   const startMs = startEpoch * 1000;
   const endMs = endEpoch * 1000;
+  const interval = _binanceInterval(granularity);
 
   const pageStarts = [];
   for (let s = startMs; s < endMs; s += pageSpanMs) pageStarts.push(s);
 
-  const MAX_PAGES = 3000; // ~3000 × 300 M1 bars ≈ 1.7yrs — headroom for a long backtest fetch
+  const MAX_PAGES = 3000; // ~3000 × 1000 M1 bars ≈ 5.7yrs — ample headroom for a long backtest fetch
   if (pageStarts.length > MAX_PAGES) pageStarts.length = MAX_PAGES;
 
-  const CONCURRENCY = 8; // parallel in-flight requests — kept modest for Coinbase's public rate limit
+  const CONCURRENCY = 8; // parallel in-flight requests
   const results = new Array(pageStarts.length);
   let completedPages = 0;
   btFetching = true;
@@ -9379,16 +9448,16 @@ async function fetchBtCandles(granularity, startEpoch, endEpoch, onProgress) {
     const controller = new AbortController();
     const timer = setTimeout(() => {
       controller.abort();
-      reject(new Error('Coinbase request timed out after 15s'));
+      reject(new Error('Binance request timed out after 15s'));
     }, 15000);
     const pageEndMs = Math.min(pageStartMs + pageSpanMs - 1, endMs);
-    const url = `${COINBASE_REST_BASE}/${COINBASE_PRODUCT}/candles?granularity=${granularity}&start=${new Date(pageStartMs).toISOString()}&end=${new Date(pageEndMs).toISOString()}`;
+    const url = `${COINBASE_REST_BASE}?symbol=${COINBASE_PRODUCT}&interval=${interval}&startTime=${pageStartMs}&endTime=${pageEndMs}&limit=${PAGE_BARS}`;
     fetch(url, { signal: controller.signal })
       .then(res => {
         clearTimeout(timer);
         if (!res.ok) {
           // Surface Retry-After (present on a real 429) so the retry loop
-          // can back off exactly as long as Coinbase actually asked for,
+          // can back off exactly as long as Binance actually asked for,
           // instead of guessing with a fixed exponential delay.
           const retryAfter = res.status === 429 ? parseFloat(res.headers.get('Retry-After')) : null;
           const err = new Error(`HTTP ${res.status}`);
@@ -9400,10 +9469,10 @@ async function fetchBtCandles(granularity, startEpoch, endEpoch, onProgress) {
       })
       .then(data => {
         if (!data) { resolve([]); return; }
-        // Coinbase candle rows: [time, low, high, open, close, volume] — time
-        // is Unix seconds already.
+        // Binance kline rows: [openTime_ms, open, high, low, close, volume,
+        // closeTime_ms, ...].
         resolve(data.map(c => ({
-          epoch: Math.floor(c[0]), open: +c[3], high: +c[2], low: +c[1], close: +c[4]
+          epoch: Math.floor(c[0] / 1000), open: +c[1], high: +c[2], low: +c[3], close: +c[4]
         })));
       })
       .catch(e => { clearTimeout(timer); reject(e); });
@@ -9411,7 +9480,7 @@ async function fetchBtCandles(granularity, startEpoch, endEpoch, onProgress) {
 
   // Retry a single page up to 3 times so a transient connection drop or rate
   // limit doesn't abort the whole fetch — but doesn't block any other
-  // in-flight page while it retries. A 429 honors Coinbase's own Retry-After
+  // in-flight page while it retries. A 429 honors Binance's own Retry-After
   // header; any other error falls back to a short exponential back-off.
   const fetchWithRetry = async (pageStartMs, pageIdx) => {
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -9448,9 +9517,13 @@ async function fetchBtCandles(granularity, startEpoch, endEpoch, onProgress) {
 
   const all = results.flat().filter(Boolean);
   all.sort((a, b) => a.epoch - b.epoch);
-  const filtered = all.filter((c, i, arr) => i === 0 || c.epoch !== arr[i - 1].epoch);
+  let filtered = all.filter((c, i, arr) => i === 0 || c.epoch !== arr[i - 1].epoch);
+  // Defensive gap-fill, same as the live/history paths — Binance is far
+  // more liquid than Coinbase was, but a genuinely quiet minute or a brief
+  // API hiccup can still leave a hole.
+  filtered = _fillCandleGaps(filtered, granularity, null);
   if (filtered.length < 100) {
-    addSignal('warn', `BT data: only ${filtered.length} bars returned. Coinbase may have limited history for this date range.`, null);
+    addSignal('warn', `BT data: only ${filtered.length} bars returned. Binance may have limited history for this date range.`, null);
   }
   return filtered;
 }
@@ -10262,7 +10335,7 @@ setInterval(() => {
   });
 }, 60 * 1000);
 
-addSignal('info','XAUUSD PA Bot v2 — Coinbase API data engine ready',null);
+addSignal('info','XAUUSD PA Bot v2 — Binance API data engine ready',null);
 
 addSignal('info','Strategy: Liquidity Sweep + Retracement Engine — M5 sweep of resting liquidity reclaimed → M1 structure shift confirms → order block + FVG define a retracement zone → regime/news/room/reclaim checks → 0-100 quality score graded B+/A/A+ | SL=structural HYBRID reference',null);
 </script>

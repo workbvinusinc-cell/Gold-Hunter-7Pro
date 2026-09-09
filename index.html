@@ -814,45 +814,6 @@ input[type=range]::-webkit-slider-thumb{
       </div>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">🔌 Broker Connection — MetaApi (Exness)</div>
-      <div class="field">
-        <label style="display:flex;align-items:center;justify-content:space-between">
-          <span>Live Trading</span>
-          <input type="checkbox" id="cfgLiveTrading" onchange="onLiveTradingToggle()"/>
-        </label>
-        <div class="field-hint" style="color:var(--red)">When ON: (1) every signal sends a real market order to Exness via MetaApi with real SL/TP, and (2) the price feed &amp; candles switch from Binance/PAXG to Exness's own live quotes for XAUUSDm. Run Test Connection first — it must show CONNECTED.</div>
-      </div>
-      <div class="field">
-        <label>MetaApi Account ID</label>
-        <input class="finput" type="text" id="cfgMetaAccountId" placeholder="e.g. 5e560e34-d1b7-47a9-88be-ac53baa95714" autocomplete="off" spellcheck="false"/>
-      </div>
-      <div class="field">
-        <label>MetaApi API Token</label>
-        <input class="finput" type="password" id="cfgMetaApiToken" placeholder="your MetaApi token" autocomplete="off" spellcheck="false"/>
-        <div class="field-hint">Stored only in this browser's local storage — never sent anywhere except MetaApi's API.</div>
-      </div>
-      <div class="field">
-        <label>Region</label>
-        <select class="finput" id="cfgMetaRegion">
-          <option value="new-york">new-york</option>
-          <option value="london">london</option>
-          <option value="frankfurt">frankfurt</option>
-          <option value="singapore">singapore</option>
-          <option value="dubai">dubai</option>
-        </select>
-        <div class="field-hint">Shown on your account's page in the MetaApi dashboard.</div>
-      </div>
-      <div class="field">
-        <label>Symbol (exact spelling on your Exness server)</label>
-        <input class="finput" type="text" id="cfgMetaSymbol" placeholder="XAUUSDm" autocomplete="off" spellcheck="false"/>
-        <div class="field-hint">Suffixes vary by server (XAUUSD, XAUUSDm, XAUUSD.a...). Check Market Watch → Symbols in MT5.</div>
-      </div>
-      <div class="field-row" style="align-items:center;gap:10px">
-        <button class="btn" type="button" id="btnTestMetaConn" onclick="testMetaConnection()" style="padding:6px 12px;font-size:9px">Test Connection</button>
-        <span id="metaConnStatus" style="font-size:9px;color:var(--text2)">Not tested yet</span>
-      </div>
-    </div>
-    <div class="settings-section">
       <div class="settings-section-title">Demo Account</div>
       <div class="field">
         <label>Starting Balance</label>
@@ -1400,105 +1361,15 @@ const CONTRACT_SIZE = 100;        // 1 lot = 100 troy oz — matches Exness XAUU
 const PRICE_DIGITS  = 2;          // Exness XAUUSD "Digits"/pip-size spec (0.01) — pricing/rounding already uses 2dp throughout
 const POINT_SIZE     = 1 / Math.pow(10, PRICE_DIGITS); // 1 point = $0.01 at 2 digits — used for swap $ conversion below
 
-// ── METAAPI REST CLIENT — real Exness account bridge ──
-// Thin fetch() wrapper over MetaApi's client REST API. No SDK/bundle
-// needed — every call below is a plain HTTPS request with an auth-token
-// header, which is what MetaApi's browser usage is designed around.
-// Docs: https://metaapi.cloud/docs/client/restApi/
-const MetaAPI = {
-  _host(kind) {
-    const r = META.region || 'london';
-    return kind === 'market'
-      ? `https://mt-market-data-client-api-v1.${r}.agiliumtrade.ai`
-      : `https://mt-client-api-v1.${r}.agiliumtrade.ai`;
-  },
-  _headers() {
-    return { 'auth-token': META.token, 'Content-Type': 'application/json', 'Accept': 'application/json' };
-  },
-  async _get(url) {
-    const res = await fetch(url, { headers: this._headers() });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
-    return data;
-  },
-  async accountInformation() {
-    return this._get(`${this._host()}/users/current/accounts/${META.accountId}/account-information`);
-  },
-  async currentPrice(symbol) {
-    return this._get(`${this._host()}/users/current/accounts/${META.accountId}/symbols/${encodeURIComponent(symbol)}/current-price`);
-  },
-  async historicalCandles(symbol, timeframe, limit) {
-    const url = `${this._host('market')}/users/current/accounts/${META.accountId}/historical-market-data/symbols/${encodeURIComponent(symbol)}/timeframes/${timeframe}/candles?limit=${limit}`;
-    const data = await this._get(url);
-    return Array.isArray(data) ? data : [];
-  },
-  async trade(body) {
-    const res = await fetch(`${this._host()}/users/current/accounts/${META.accountId}/trade`, {
-      method: 'POST', headers: this._headers(), body: JSON.stringify(body),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || (data.numericCode && data.numericCode !== 10009)) {
-      throw new Error(data.message || `HTTP ${res.status}`);
-    }
-    return data;
-  },
-  async openMarketOrder(isBuy, symbol, volume, stopLoss, takeProfit) {
-    const body = { actionType: isBuy ? 'ORDER_TYPE_BUY' : 'ORDER_TYPE_SELL', symbol, volume: +volume };
-    if (stopLoss   != null) body.stopLoss   = +stopLoss;
-    if (takeProfit != null) body.takeProfit = +takeProfit;
-    return this.trade(body);
-  },
-  async modifyPosition(positionId, stopLoss, takeProfit) {
-    const body = { actionType: 'POSITION_MODIFY', positionId };
-    if (stopLoss   != null) body.stopLoss   = +stopLoss;
-    if (takeProfit != null) body.takeProfit = +takeProfit;
-    return this.trade(body);
-  },
-  async closePositionById(positionId) {
-    return this.trade({ actionType: 'POSITION_CLOSE_ID', positionId });
-  },
-};
-
-// ── LIVE MIRRORING — sends the bot's own decisions to the real account ──
-// The local demoPositions ledger stays the single source of truth for
-// strategy/risk logic; these calls just mirror its open/modify/close
-// events onto the real Exness account when Live Trading is on. Failures
-// are logged but never block or unwind the local simulated trade — if an
-// order fails to mirror, the bot keeps running in simulation for that
-// position rather than getting stuck.
-async function mirrorOpenPosition(pos) {
-  if (!(META.enabled && META.connected)) return;
-  try {
-    const isBuy = pos.dir === 'UP';
-    const res = await MetaAPI.openMarketOrder(isBuy, META.symbol, pos.lots, pos.slPrice, pos.eaManaged ? undefined : pos.tpPrice);
-    pos.livePositionId = res.positionId || res.orderId;
-    addSignal('info', `[LIVE] ${isBuy ? 'BUY' : 'SELL'} ${pos.lots.toFixed(2)}L ${META.symbol} sent to Exness — ticket ${pos.livePositionId}`, null);
-  } catch (e) {
-    addSignal('warn', `[LIVE] Order to Exness FAILED — ${e.message}`, null);
-  }
-}
-async function mirrorModifyStop(pos) {
-  if (!(META.enabled && META.connected) || !pos.livePositionId) return;
-  try {
-    await MetaAPI.modifyPosition(pos.livePositionId, pos.slPrice, pos.eaManaged ? undefined : pos.tpPrice);
-  } catch (e) {
-    addSignal('warn', `[LIVE] Exness stop-loss update failed (ticket ${pos.livePositionId}) — ${e.message}`, null);
-  }
-}
-async function mirrorClosePosition(pos, reason) {
-  if (!(META.enabled && META.connected) || !pos.livePositionId) return;
-  try {
-    await MetaAPI.closePositionById(pos.livePositionId);
-    addSignal('info', `[LIVE] Close sent to Exness — ticket ${pos.livePositionId} (${reason})`, null);
-  } catch (e) {
-    // Most common cause here is the broker's own SL/TP already closed the
-    // position first (expected — we set real SL/TP on the order itself),
-    // so this is intentionally quiet rather than raised as a warning.
-  }
-}
-
 let _coinbaseWS             = null;  // WebSocket handle — Coinbase live feed
 let _coinbaseReconnectTimer = null;
+let _coinbaseWatchdogTimer  = null;  // periodic staleness check — forces a
+                                      // reconnect if no message (ticker OR
+                                      // heartbeat) has arrived recently, even
+                                      // if the socket itself never fires
+                                      // 'close' (a "half-dead" connection).
+let _lastCoinbaseMsgAt      = 0;     // Date.now() of the last WS message of
+                                      // ANY type (ticker or heartbeat).
 
 const CFG = {
   RISK_PCT     : 1.0,
@@ -1663,25 +1534,6 @@ let bid = 0, ask = 0, mid = 0, prevMid = 0;
 let balance = null, balCcy = 'USD';
 let startBalance = 0;
 let sessionPnL   = 0;
-
-// ── BROKER CONNECTION — MetaApi (Exness) ──
-// Real live-broker bridge. When META.enabled && META.connected, the price
-// feed/candles switch from the Coinbase PAXG-USD simulation source to
-// Exness's own live quotes via MetaApi, and every bot-generated trade is
-// mirrored to the real account as a real market order with real SL/TP.
-// The local demo ledger keeps running underneath exactly as before (it's
-// still the "brain" deciding entries/exits and the source of the on-screen
-// stats) — live mode just additionally sends each open/modify/close to the
-// real broker via MetaApi's REST API. Token/Account ID are kept only in
-// this browser's localStorage and sent only to MetaApi's own API.
-const META = {
-  enabled: false,
-  connected: false,
-  accountId: '',
-  token: '',
-  region: 'london',
-  symbol: 'XAUUSDm',
-};
 
 let demoBalance     = 0;
 let demoStartBal    = 0;
@@ -6619,7 +6471,6 @@ function _executeDemoTrade(dir, ob, quality = 1, rawSetup = null, qualityScore =
     eaManaged: eaManagedNow,
   };
   demoPositions.push(pos);
-  mirrorOpenPosition(pos);
   if (riskCheck) updateRiskAudit(riskCheck, pos);
   addSignal(dir==='UP'?'buy':'sell',
     `${isBuy?'BUY':'SELL'} ${adjLots.toFixed(2)}L ${grade}${newsTag}${riskTag} @ ${entryPrice.toFixed(2)} | SL:${slPrice.toFixed(2)} ${pos.eaManaged ? '(EA trail exit)' : `TP:${tpPrice.toFixed(2)}`} | sprd:$${dynSpread} slip:$${slip.toFixed(2)}`, mid);
@@ -6861,7 +6712,6 @@ function forceCloseEaPositions(reason) {
     const exitPrice = isBuy ? mid - halfSpread : mid + halfSpread;
     const pnl = calcClosePnL(pos, exitPrice, reason);
     demoPositions = demoPositions.filter(p => p.id !== pos.id);
-    mirrorClosePosition(pos, reason);
     const swap = calcSwapCost(pos, pos.openTime, Date.now());
     const totalPnl = pnl + swap;
     demoBalance = Math.max(0, demoBalance + (isNaN(totalPnl) ? 0 : totalPnl));
@@ -7001,7 +6851,6 @@ function checkDemoPositions() {
     if(trail.newSL !== pos.slPrice) {
       pos.slPrice = trail.newSL;
       pos.slAmount = 0; // BE+ territory
-      mirrorModifyStop(pos);
       if(trail.trailInfo) {
         addSignal('info', `#${pos.id} ${pos.dir==='UP'?'BUY':'SELL'} ${trail.trailInfo} (${trail.pctToTP}% to TP)`, mid);
       }
@@ -7143,7 +6992,6 @@ function checkDemoPositions() {
 
   closeData.forEach(({pos, pnl, reason}) => {
     demoPositions = demoPositions.filter(p=>p.id!==pos.id);
-    mirrorClosePosition(pos, reason);
     // Swap only bites if the position was actually open across a daily
     // rollover — near-zero for this bot's typical scalp hold times, but
     // real for the occasional multi-hour runner.
@@ -7208,10 +7056,9 @@ function updateDemoPositionsUI() {
     const dirLbl = pos.dir==='UP'?'BUY':'SELL';
     const grade = (pos.quality||1) >= 3 ? '★★★' : (pos.quality||1) === 2 ? '★★' : '★';
     const beTag = pos.beTriggered ? ' 🔒BE' : '';
-    const liveTag = pos.livePositionId ? ' <span style="color:var(--green)">●LIVE</span>' : '';
     return `<div class="pos-card">
       <div class="pos-head">
-        <span class="pos-dir ${pos.dir==='UP'?'b':'s'}">${dirLbl} ${(pos.lots||0.01).toFixed(2)}L ${grade}${beTag}${liveTag}</span>
+        <span class="pos-dir ${pos.dir==='UP'?'b':'s'}">${dirLbl} ${(pos.lots||0.01).toFixed(2)}L ${grade}${beTag}</span>
         <span class="pos-pnl ${pnl>=0?'g':'r'}">${pnl>=0?'+':''}${pnl.toFixed(2)}</span>
       </div>
       <div class="pos-det">
@@ -7273,13 +7120,7 @@ function openDrawer(name) {
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   const btnMap={feed:'btnFeed',positions:'btnPositions',setup:'btnSetup',settings:'btnSettings',backtest:'btnBacktest',history:'btnHistory'};
   if(btnMap[name]) $(btnMap[name])?.classList.add('active');
-  // NOTE: updatePositionsUI([]) below was leftover from a previous broker
-  // integration and was always called with a hardcoded empty array, which
-  // made the Positions drawer show "No open positions" any time `authed`
-  // was true — including now, once the live Exness feed connects. Open
-  // positions (demo AND live-mirrored) live in demoPositions, so that's
-  // always the correct source to render here.
-  if(name==='positions') { updateDemoPositionsUI(); }
+  if(name==='positions') { authed ? updatePositionsUI([]) : updateDemoPositionsUI(); }
   if(name==='setup') { updateActiveSystemBanner(); updateEaSetupPanel(); }
   if(name==='history')   renderLiveHistory();
   if(name==='backtest' && $('btRiskPct') && !$('btRiskPct').value) $('btRiskPct').value = CFG.RISK_PCT;
@@ -7392,120 +7233,6 @@ function loadSettings() {
   if(CFG.DEMO_BALANCE > 0) resetHardFloor(CFG.DEMO_BALANCE);
   updateDepositNotice();
   updateStatsStrip();
-}
-
-// ── BROKER CONNECTION SETTINGS — MetaApi (Exness) ──
-// Kept in its own localStorage key, separate from the strategy/risk CFG
-// blob above, since it's account credentials rather than a trading
-// parameter. Loaded once at startup and re-saved every time Test
-// Connection succeeds or Live Trading is toggled, so neither depends on
-// the user also remembering to hit the main "Save & Apply" button.
-function loadMetaSettings() {
-  try {
-    const saved = JSON.parse(localStorage.getItem('pabotMeta') || '{}');
-    if (saved.accountId) META.accountId = saved.accountId;
-    if (saved.token)     META.token     = saved.token;
-    if (saved.region)    META.region    = saved.region;
-    if (saved.symbol)    META.symbol    = saved.symbol;
-    // `connected` is intentionally NOT persisted — every fresh page load
-    // must re-run Test Connection before Live Trading can be enabled again.
-    // `enabled` also is not restored as `true` on its own; see below.
-    if (saved.enabled && saved.accountId && saved.token) {
-      // Live Trading was left on last session — restore the fields but
-      // still require a fresh Test Connection before it can go live again.
-      META.enabled = false;
-    }
-  } catch(e) {}
-  $('cfgMetaAccountId').value = META.accountId || '';
-  $('cfgMetaApiToken').value  = META.token || '';
-  $('cfgMetaRegion').value    = META.region || 'london';
-  $('cfgMetaSymbol').value    = META.symbol || 'XAUUSDm';
-  $('cfgLiveTrading').checked = false;
-  updateLiveBadges();
-}
-
-function saveMetaSettings() {
-  try {
-    localStorage.setItem('pabotMeta', JSON.stringify({
-      accountId: META.accountId, token: META.token,
-      region: META.region, symbol: META.symbol, enabled: META.enabled,
-    }));
-  } catch(e) {}
-}
-
-function updateLiveBadges() {
-  const modeBadge = $('modeBadge'), exnessBadge = $('exnessBadge');
-  if (META.enabled && META.connected) {
-    modeBadge.textContent = 'LIVE';
-    modeBadge.className = 'badge badge-live';
-    exnessBadge.textContent = 'EXNESS LIVE';
-    exnessBadge.style.borderColor = 'var(--green-border)';
-    exnessBadge.style.color = 'var(--green)';
-    exnessBadge.style.background = 'var(--green-dim)';
-  } else {
-    modeBadge.textContent = 'DEMO';
-    modeBadge.className = 'badge badge-demo';
-    exnessBadge.textContent = 'EXNESS STD';
-    exnessBadge.style.borderColor = 'rgba(227,173,76,0.4)';
-    exnessBadge.style.color = 'var(--gold)';
-    exnessBadge.style.background = 'rgba(227,173,76,0.08)';
-  }
-}
-
-async function testMetaConnection() {
-  const btn = $('btnTestMetaConn'), statusEl = $('metaConnStatus');
-  META.accountId = $('cfgMetaAccountId').value.trim();
-  META.token     = $('cfgMetaApiToken').value.trim();
-  META.region    = $('cfgMetaRegion').value;
-  META.symbol    = $('cfgMetaSymbol').value.trim() || 'XAUUSDm';
-  if (!META.accountId || !META.token) {
-    statusEl.textContent = 'Enter Account ID and API Token first';
-    statusEl.style.color = 'var(--red)';
-    return;
-  }
-  btn.disabled = true;
-  statusEl.textContent = 'Testing…';
-  statusEl.style.color = 'var(--text2)';
-  META.connected = false;
-  try {
-    const info = await MetaAPI.accountInformation();
-    // Also confirm the symbol is tradeable on this account/server before
-    // declaring success — a wrong suffix (XAUUSD vs XAUUSDm) fails here.
-    await MetaAPI.currentPrice(META.symbol);
-    META.connected = true;
-    const bal = (typeof info.balance === 'number') ? info.balance.toFixed(2) : info.balance;
-    statusEl.textContent = `CONNECTED — ${info.server || META.region} · bal $${bal ?? '—'}`;
-    statusEl.style.color = 'var(--green)';
-    addSignal('info', `MetaApi connected — Exness account ${info.login || META.accountId} (${info.server || ''})`, null);
-  } catch (e) {
-    META.connected = false;
-    statusEl.textContent = `Failed: ${e.message}`;
-    statusEl.style.color = 'var(--red)';
-  } finally {
-    btn.disabled = false;
-    saveMetaSettings();
-    updateLiveBadges();
-  }
-}
-
-function onLiveTradingToggle() {
-  const cb = $('cfgLiveTrading');
-  if (cb.checked && !META.connected) {
-    cb.checked = false;
-    alert('Run Test Connection first — it must show CONNECTED before enabling Live Trading.');
-    return;
-  }
-  if (cb.checked) {
-    const ok = confirm('LIVE TRADING will send REAL market orders with REAL money to your Exness account via MetaApi.\n\nMake sure you have tested this on a demo MetaApi account first.\n\nContinue?');
-    if (!ok) { cb.checked = false; return; }
-  }
-  META.enabled = cb.checked;
-  saveMetaSettings();
-  updateLiveBadges();
-  addSignal('info', META.enabled
-    ? `LIVE TRADING ENABLED — orders will be sent to Exness (${META.symbol})`
-    : 'Live trading disabled — back to simulated feed', null);
-  connect(); // restart the feed on the newly selected source
 }
 
 function saveSettings() {
@@ -7845,6 +7572,26 @@ function _processTick(midPrice, epochSec) {
           arr.push({ epoch: bar.epoch, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
           const cap = gran === 60 ? 500 : gran === 300 ? 200 : 100;
           if (arr.length > cap) arr.shift();
+
+          // ── GAP BACKFILL — if the feed went quiet (thin PAXG-USD volume,
+          // or the watchdog just reconnected after a stall) and the new
+          // bucket is more than one step past the bar we just closed, the
+          // in-between buckets never got a forming bar at all. Left alone,
+          // the NEXT candle drawn right after this one would silently
+          // represent several missing minutes — visually the chart looks
+          // like it "jumped"/is messy, since equally-spaced candle slots on
+          // screen no longer correspond to equal real time. Fill the gap
+          // with flat (open=high=low=close at the last known close) bars
+          // so the timeline stays honest and the chart reads as a clean
+          // (if quiet) flat line rather than a jarring jump.
+          const missedBuckets = Math.round((bucket - bar.epoch) / gran) - 1;
+          if (missedBuckets > 0 && missedBuckets < 500) {
+            for (let i = 1; i <= missedBuckets; i++) {
+              const fillEpoch = bar.epoch + i * gran;
+              arr.push({ epoch: fillEpoch, open: bar.close, high: bar.close, low: bar.close, close: bar.close });
+              if (arr.length > cap) arr.shift();
+            }
+          }
         }
       }
       // Open a new forming bar
@@ -7924,8 +7671,36 @@ async function _coinbaseLoadHistory() {
   }
 }
 
+// ── STALENESS WATCHDOG ──
+// The WS 'close' event only fires on a clean disconnect. A "half-dead"
+// connection — one the browser/network silently stopped delivering to,
+// without ever firing close/error — leaves the socket looking "open"
+// forever while no messages arrive. That's the #1 cause of the chart
+// freezing mid-session: mid/bid/ask stop updating, no new candle bucket
+// ever closes, and drawChart() just keeps redrawing the same stale bar.
+// Fix: track the time of the LAST message of any kind (ticker OR
+// heartbeat) and, on a periodic check, force a full reconnect if too much
+// time has passed with nothing received — even though the socket's
+// readyState still claims OPEN.
+const _COINBASE_STALE_MS = 12000; // no message for 12s → treat as dead
+function _startCoinbaseWatchdog() {
+  if (_coinbaseWatchdogTimer) clearInterval(_coinbaseWatchdogTimer);
+  _coinbaseWatchdogTimer = setInterval(() => {
+    if (!_coinbaseWS) return;
+    // Skip the check entirely while backgrounded — mobile tabs throttle/
+    // suspend timers and sockets anyway, and the visibility-gap scanner
+    // already handles reconciling positions once the tab resumes.
+    if (document.hidden) return;
+    const silentFor = Date.now() - _lastCoinbaseMsgAt;
+    if (_lastCoinbaseMsgAt && silentFor > _COINBASE_STALE_MS) {
+      addSignal('warn', `Coinbase feed stalled (${Math.round(silentFor/1000)}s silent) — forcing reconnect...`, null);
+      _connectCoinbase();
+    }
+  }, 4000);
+}
+
 function _connectCoinbase() {
-  if (_coinbaseWS) { try { _coinbaseWS.close(); } catch(_) {} _coinbaseWS = null; }
+  if (_coinbaseWS) { try { _coinbaseWS.onclose = null; _coinbaseWS.close(); } catch(_) {} _coinbaseWS = null; }
   if (_coinbaseReconnectTimer) { clearTimeout(_coinbaseReconnectTimer); _coinbaseReconnectTimer = null; }
 
   addSignal('info', `Connecting to Coinbase WebSocket...`, null);
@@ -7937,24 +7712,46 @@ function _connectCoinbase() {
 
   const ws = new WebSocket(COINBASE_WS_URL);
   _coinbaseWS = ws;
+  _lastCoinbaseMsgAt = Date.now(); // seed so the watchdog doesn't fire instantly
+  _startCoinbaseWatchdog();
 
   ws.onopen = () => {
     ws.send(JSON.stringify({
       type: 'subscribe',
       product_ids: [COINBASE_PRODUCT],
-      channels: ['ticker'],
+      // 'heartbeat' emits ~once/sec regardless of trade activity, so it's
+      // the liveness signal; 'ticker' emits only when a trade actually
+      // prints (PAXG-USD volume can go quiet for stretches) and is the
+      // price/candle source. Subscribing to both means a long quiet
+      // market no longer looks identical to a dead socket.
+      channels: ['ticker', 'heartbeat'],
     }));
     setConn('on');
     authed = true;
+    _lastCoinbaseMsgAt = Date.now();
     addSignal('info', `Coinbase connected — ${COINBASE_PRODUCT} (Gold) live tick feed active`, null);
   };
 
   ws.onmessage = evt => {
-    try { _handleCoinbaseMsg(JSON.parse(evt.data)); } catch(_) {}
+    _lastCoinbaseMsgAt = Date.now(); // ANY message counts as "alive", not just ticker
+    let parsed;
+    try { parsed = JSON.parse(evt.data); } catch(e) { return; }
+    try {
+      _handleCoinbaseMsg(parsed);
+    } catch (e) {
+      // Visible, non-fatal: log it instead of silently swallowing, and do
+      // NOT let a single bad message wedge the feed. Previously this catch
+      // was silent, so a persistently-thrown error (e.g. bad state left
+      // over from a prior message) could quietly stop candles/strategy
+      // from ever running again with zero indication anything was wrong.
+      console.error('Coinbase message handler error:', e);
+      addSignal('warn', `Feed processing error (recovered): ${e.message}`, null);
+    }
   };
 
   ws.onclose = () => {
     _coinbaseWS = null;
+    if (_coinbaseWatchdogTimer) { clearInterval(_coinbaseWatchdogTimer); _coinbaseWatchdogTimer = null; }
     setConn('wait');
     addSignal('warn', `Coinbase disconnected — reconnecting in 5 s...`, null);
     _coinbaseReconnectTimer = setTimeout(_connectCoinbase, 5000);
@@ -7966,7 +7763,12 @@ function _connectCoinbase() {
 }
 
 function _handleCoinbaseMsg(msg) {
-  if (!msg || msg.type !== 'ticker' || msg.product_id !== COINBASE_PRODUCT) return;
+  if (!msg || msg.product_id !== COINBASE_PRODUCT) return;
+  // Heartbeat messages carry no price — they only exist to keep the
+  // watchdog's "last message" clock ticking during quiet markets. Nothing
+  // else to do with them.
+  if (msg.type === 'heartbeat') return;
+  if (msg.type !== 'ticker') return;
   // ── BACKTEST REPLAY GUARD — the live Coinbase WS keeps streaming in the
   // background even while a backtest replay is running (it's never closed),
   // and this handler mutates the SAME globals the replay engine owns every
@@ -7983,7 +7785,11 @@ function _handleCoinbaseMsg(msg) {
   // ── Real-time best bid/ask tick ───────────────────────────────
   const newBid = +msg.best_bid;
   const newAsk = +msg.best_ask;
-  if (!newBid || !newAsk) return;
+  // Guard against NaN/0/garbage payloads ever reaching mid/candles — a
+  // single malformed tick used to be able to poison `mid` (e.g. to NaN),
+  // and every downstream calculation (chart scale, PnL, strategy) would
+  // then silently misbehave or throw on every subsequent tick forever.
+  if (!Number.isFinite(newBid) || !Number.isFinite(newAsk) || newBid <= 0 || newAsk <= 0) return;
   const newMid = (newBid + newAsk) / 2;
   const epochSec = Math.floor(Date.now() / 1000);
 
@@ -8000,106 +7806,28 @@ function _handleCoinbaseMsg(msg) {
   updatePriceBadges(bid, ask);
 
   // M1/M5/M15 OHLC bars are built from this tick stream — see _processTick().
-  _processTick(newMid, epochSec);
-  checkDemoPositions();
-  if (!replay.active) runStrategy();
+  // Each downstream stage gets its own try/catch: a bug in position
+  // management or strategy logic must never be able to block the next
+  // stage, and must never propagate back up to stop candle-building on
+  // the NEXT tick either (that was the old failure mode — one throw and
+  // the chart looked "frozen" with no error visible anywhere).
+  try { _processTick(newMid, epochSec); }
+  catch (e) { console.error('_processTick error:', e); }
+
+  try { checkDemoPositions(); }
+  catch (e) { console.error('checkDemoPositions error:', e); }
+
+  try { if (!replay.active) runStrategy(); }
+  catch (e) { console.error('runStrategy error:', e); }
 }
 
 // ── PRIMARY CONNECT — Coinbase public API (primary and only data source) ──
-// ── LIVE FEED — MetaApi (Exness) ── used instead of Coinbase whenever
-// Live Trading is on and Test Connection has succeeded. Polls MetaApi's
-// REST current-price endpoint (simple, no socket.io dependency needed)
-// and feeds ticks through the exact same _processTick/checkDemoPositions/
-// runStrategy pipeline the Coinbase feed uses, so the strategy code never
-// needs to know which broker the price came from.
-let _metaPollTimer = null;
-let _metaBalanceTimer = null;
-
-async function _metaLoadHistory() {
-  const specs = [[60, '1m', 300], [300, '5m', 200], [900, '15m', 100]];
-  for (const [gran, tf, limit] of specs) {
-    try {
-      const data = await MetaAPI.historicalCandles(META.symbol, tf, limit);
-      if (btFetching) continue;
-      const arr = data.map(c => ({
-        epoch: Math.floor(new Date(c.time).getTime() / 1000),
-        open: +c.open, high: +c.high, low: +c.low, close: +c.close,
-      })).sort((a, b) => a.epoch - b.epoch);
-      if (arr.length) {
-        candles[gran] = arr;
-        const label = gran === 60 ? '1min' : gran === 300 ? '5min' : '15min';
-        addSignal('info', `${arr.length} ${label} candles loaded from Exness (MetaApi)`, null);
-        drawChart();
-        if (gran === 60 && _gapCheckPending) _scanGapPositions();
-      }
-    } catch (e) {
-      addSignal('warn', `Exness history load failed (${tf}): ${e.message}`, null);
-    }
-  }
-}
-
-function _connectMetaApi() {
-  if (_metaPollTimer) { clearInterval(_metaPollTimer); _metaPollTimer = null; }
-  if (_metaBalanceTimer) { clearInterval(_metaBalanceTimer); _metaBalanceTimer = null; }
-  addSignal('info', `Connecting to Exness via MetaApi (${META.symbol})...`, null);
-  setConn('wait');
-  _metaLoadHistory();
-
-  const poll = async () => {
-    try {
-      const p = await MetaAPI.currentPrice(META.symbol);
-      const newBid = +p.bid, newAsk = +p.ask;
-      if (!newBid || !newAsk) return;
-      if (typeof replay !== 'undefined' && replay.active) return;
-      const newMid = (newBid + newAsk) / 2;
-      const epochSec = Math.floor(Date.now() / 1000);
-      if (mid && newMid !== mid) {
-        const diff = newMid - mid, dir = diff > 0 ? 'up' : 'dn';
-        const chgEl = $('priceChg');
-        chgEl.textContent = `${diff > 0 ? '+' : ''}${diff.toFixed(2)}`;
-        chgEl.className = `price-chg ${dir}`;
-        flashPrice(dir);
-      }
-      bid = newBid; ask = newAsk; prevMid = mid; mid = newMid;
-      $('priceMain').textContent = mid.toFixed(2);
-      updatePriceBadges(bid, ask);
-      if (!authed) { authed = true; setConn('on'); addSignal('info', `Exness connected — live ${META.symbol} feed active (MetaApi)`, null); }
-      _processTick(newMid, epochSec);
-      checkDemoPositions();
-      if (!replay.active) runStrategy();
-    } catch (e) {
-      setConn('wait');
-      addSignal('warn', `Exness price poll failed: ${e.message}`, null);
-    }
-  };
-  poll();
-  _metaPollTimer = setInterval(poll, 2000);
-
-  const pollBalance = async () => {
-    try {
-      const info = await MetaAPI.accountInformation();
-      balance = info.equity ?? info.balance ?? balance;
-      balCcy = info.currency || balCcy;
-      updateStatsStrip();
-    } catch (e) { /* non-fatal — stats strip just keeps last known value */ }
-  };
-  pollBalance();
-  _metaBalanceTimer = setInterval(pollBalance, 5000);
-}
-
 function connect() {
-  if (_coinbaseWS) { try { _coinbaseWS.close(); } catch(_) {} _coinbaseWS = null; }
+  if (_coinbaseWS) { try { _coinbaseWS.onclose = null; _coinbaseWS.close(); } catch(_) {} _coinbaseWS = null; }
   if (_coinbaseReconnectTimer) { clearTimeout(_coinbaseReconnectTimer); _coinbaseReconnectTimer = null; }
-  if (_metaPollTimer) { clearInterval(_metaPollTimer); _metaPollTimer = null; }
-  if (_metaBalanceTimer) { clearInterval(_metaBalanceTimer); _metaBalanceTimer = null; }
-  authed = false;
+  if (_coinbaseWatchdogTimer) { clearInterval(_coinbaseWatchdogTimer); _coinbaseWatchdogTimer = null; }
   setConn('wait');
-  if (META.enabled && META.connected) {
-    _connectMetaApi();
-  } else {
-    balance = null; // drop any stale live-account balance so the stats strip falls back to demoBalance
-    _connectCoinbase();
-  }
+  _connectCoinbase();
 }
 
 
@@ -10457,7 +10185,6 @@ function _scanGapPositions() {
     const savedMid = mid;
     mid = atPrice; // log will show the actual hit price, not the current stale mid
     demoPositions = demoPositions.filter(p => p.id !== pos.id);
-    mirrorClosePosition(pos, reason);
     const swapCost = calcSwapCost(pos, pos.openTime, Date.now());
     pnl += swapCost;
     demoBalance = Math.max(0, demoBalance + (isNaN(pnl) ? 0 : pnl));
@@ -10507,7 +10234,6 @@ function _scanGapPositions() {
 window.addEventListener('resize', resizeCV);
 resizeCV();
 loadSettings();
-loadMetaSettings();
 updateProfitLockUI();
 setBtToday();
 Storage.init().catch(() => {});

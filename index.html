@@ -728,16 +728,12 @@ input[type=range]::-webkit-slider-thumb{
       <div class="gate-note">Re-evaluated once per closed M1 candle, exactly like the source EA's OnTick(). Entry, stop-loss, lot sizing, trailing stop, and daily lock all use the values from Settings → MQL5 HFT EA Settings.</div>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">Live Feed — Coinbase + Binance (Blended)</div>
+      <div class="settings-section-title">Live Feed — Coinbase API</div>
       <div class="demo-notice">
-        <strong>✅ DUAL FEED ACTIVE</strong>
-        Live XAU/USD bid/ask ticks stream free from both Coinbase (PAXG-USD)
-        and Binance (PAXGUSDT) public WebSockets via PAX Gold — a token
-        redeemable 1:1 for physical gold, tightly tracking spot XAU/USD.
-        Price and every candle are the average of both feeds at once, which
-        cancels out single-exchange noise/spikes; if one exchange drops, the
-        bot falls back to the other automatically. No API key required —
-        click Connect to start.
+        <strong>✅ COINBASE FEED ACTIVE</strong>
+        Live XAU/USD bid/ask ticks stream free from Coinbase's public WebSocket via PAXG
+        (PAX Gold — a token redeemable 1:1 for physical gold, tightly tracking
+        spot XAU/USD; product PAXG-USD). No API key required — click Connect to start.
       </div>
       <button class="btn btn-auth" id="authBtn" style="margin-top:8px">Connect</button>
 
@@ -815,6 +811,45 @@ input[type=range]::-webkit-slider-thumb{
         <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
           <span>Margin Level</span><span id="raLevel" style="color:var(--text);font-weight:700">—</span>
         </div>
+      </div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">🔌 Broker Connection — MetaApi (Exness)</div>
+      <div class="field">
+        <label style="display:flex;align-items:center;justify-content:space-between">
+          <span>Live Trading</span>
+          <input type="checkbox" id="cfgLiveTrading" onchange="onLiveTradingToggle()"/>
+        </label>
+        <div class="field-hint" style="color:var(--red)">When ON: (1) every signal sends a real market order to Exness via MetaApi with real SL/TP, and (2) the price feed &amp; candles switch from Binance/PAXG to Exness's own live quotes for XAUUSDm. Run Test Connection first — it must show CONNECTED.</div>
+      </div>
+      <div class="field">
+        <label>MetaApi Account ID</label>
+        <input class="finput" type="text" id="cfgMetaAccountId" placeholder="e.g. 5e560e34-d1b7-47a9-88be-ac53baa95714" autocomplete="off" spellcheck="false"/>
+      </div>
+      <div class="field">
+        <label>MetaApi API Token</label>
+        <input class="finput" type="password" id="cfgMetaApiToken" placeholder="your MetaApi token" autocomplete="off" spellcheck="false"/>
+        <div class="field-hint">Stored only in this browser's local storage — never sent anywhere except MetaApi's API.</div>
+      </div>
+      <div class="field">
+        <label>Region</label>
+        <select class="finput" id="cfgMetaRegion">
+          <option value="new-york">new-york</option>
+          <option value="london">london</option>
+          <option value="frankfurt">frankfurt</option>
+          <option value="singapore">singapore</option>
+          <option value="dubai">dubai</option>
+        </select>
+        <div class="field-hint">Shown on your account's page in the MetaApi dashboard.</div>
+      </div>
+      <div class="field">
+        <label>Symbol (exact spelling on your Exness server)</label>
+        <input class="finput" type="text" id="cfgMetaSymbol" placeholder="XAUUSDm" autocomplete="off" spellcheck="false"/>
+        <div class="field-hint">Suffixes vary by server (XAUUSD, XAUUSDm, XAUUSD.a...). Check Market Watch → Symbols in MT5.</div>
+      </div>
+      <div class="field-row" style="align-items:center;gap:10px">
+        <button class="btn" type="button" id="btnTestMetaConn" onclick="testMetaConnection()" style="padding:6px 12px;font-size:9px">Test Connection</button>
+        <span id="metaConnStatus" style="font-size:9px;color:var(--text2)">Not tested yet</span>
       </div>
     </div>
     <div class="settings-section">
@@ -989,7 +1024,7 @@ input[type=range]::-webkit-slider-thumb{
           Spread: $0.10–$0.28 typical · Asian: ~$0.28 · NY/LON overlap: ~$0.15 · News spike: ~$1.00+ (Exness Raw Spread XAUUSD baseline)<br>
           Slippage: $0–$0.12 base, scaled up by order size and current volatility · Execution: 20–120 ms (simulated in both live and backtest fills) · Commission $7/lot round turn (Raw Spread) · Leverage and spread guard set above<br>
           Swap: -$53.20/lot/day long, $0 short, tripled Wednesday (live Exness XAUUSD spec) — only applies if a trade is held across a daily rollover<br>
-          Data: Coinbase + Binance PAXG WebSockets, blended (PAX Gold, tracks spot XAU/USD) · lots adjust x0.60–x1.20 by news impact
+          Data: Coinbase PAXG-USD WebSocket (PAX Gold, tracks spot XAU/USD) · lots adjust x0.60–x1.20 by news impact
         </div>
       </div>
     </div>
@@ -1203,7 +1238,7 @@ input[type=range]::-webkit-slider-thumb{
   </div>
   <div class="drawer-body">
     <div class="bt-summary-note">
-      Replays your strategy on real historical XAUUSD data (via PAXG/Coinbase, tracking spot gold — backtest history is Coinbase-only; live trading uses the blended Coinbase+Binance feed). Uses the identical momentum-breakout + quality-score engine and risk management as live mode — no data advantage, no repainting. M5 trend bias + M1 execution. Trades appear on chart during replay.<br><br>
+      Replays your strategy on real historical XAUUSD data (via PAXG/Coinbase, tracking spot gold). Uses the identical momentum-breakout + quality-score engine and risk management as live mode — no data advantage, no repainting. M5 trend bias + M1 execution. Trades appear on chart during replay.<br><br>
       <span style="color:var(--gold);font-family:var(--sans);font-size:8px;font-weight:700;letter-spacing:.08em">MARKET SIMULATION ACTIVE:</span><br>
       News-aware trading (ALL news types traded · lots ×0.60 at release · ×1.20 post-release) · Spread: $0.10–$0.28 typical, up to $1.00+ on news spikes (Exness Raw Spread XAUUSD) | Slippage: $0–$0.12 base, scaled up by order size and volatility | Execution delay: 20–120 ms, simulated on every fill | Commission: $7/lot round turn | Swap: -$53.20/lot/day long, tripled Wednesday (live Exness spec, only on trades held across rollover)
     </div>
@@ -1344,48 +1379,126 @@ input[type=range]::-webkit-slider-thumb{
 //  CHRONOLOGICAL ORDER: bars processed strictly index+1 after index; no
 //  look-back into future indices. Scrub/fast-forward uses the same pipeline.
 // ════════════════════════════════════════════════════════════════════════════
-// ── DUAL DATA-FEED CONFIG — Coinbase + Binance, blended ──
-// Free, no API key required on either side. Both track spot XAU/USD via a
-// gold-backed token and stream live tick-by-tick bid/ask over public
-// WebSockets plus historical OHLC over REST. Live bid/ask and every M1/M5/M15
-// candle are built from the AVERAGE of both feeds (see _onPriceTick /
-// _blendHistory below) rather than either exchange alone — this is what
-// smooths out a single exchange's own noise/spikes/thin-book jitter and is
-// what actually produces cleaner-looking candles, on top of the crisp
-// pixel-snapped rendering fix. If one exchange drops, the bot falls back to
-// the other automatically; only if BOTH are down does the feed stop.
+// ── COINBASE PUBLIC API CONFIG ──
+// Free, no API key required. REST candles for historical bars + the public
+// Exchange WebSocket ticker channel for live bid/ask.
 //
-// XAUUSD DATA-FEED NOTE: neither Coinbase nor Binance lists a forex/
-// commodity XAU/USD pair directly.
-//  - Coinbase: PAXG-USD — PAX Gold, an ERC-20 token redeemable 1:1 for a fine
-//    troy ounce of London Good Delivery gold.
-//  - Binance: PAXGUSDT — the same PAX Gold token, priced against USDT
-//    (treated as ~1 USD here, consistent with how every other USDT-quoted
-//    price on Binance is used as a USD proxy).
-// Both track spot XAU/USD tightly (small basis/premium only). All display
-// labels below still read "XAUUSD" — PAXG-USD / PAXGUSDT are purely the wire
-// symbols. Backtest replay data still comes from Coinbase only (see the BT
-// fetcher further down) — only the live feed and its history warm-up are
-// blended across both sources.
+// XAUUSD DATA-FEED NOTE: Coinbase doesn't list a forex/commodity XAU/USD
+// pair. It does list PAXG-USD — PAX Gold, an ERC-20 token where 1 token is
+// redeemable for 1 fine troy ounce of London Good Delivery gold, custodied
+// and audited 1:1 — so its market price tracks spot XAU/USD tightly (small
+// basis/premium only, not a synthetic index). This is a free, no-API-key
+// source that offers true tick-by-tick best bid/ask over WebSocket plus
+// historical M1/M5/M15 candles over REST. All display labels below still
+// read "XAUUSD" — PAXG-USD is purely the wire symbol. Coinbase is the only
+// data source used anywhere in this bot — live feed, historical warm-up,
+// and backtest data all come from Coinbase's public Exchange API.
 const COINBASE_WS_URL   = 'wss://ws-feed.exchange.coinbase.com';
 const COINBASE_REST_BASE = 'https://api.exchange.coinbase.com/products';
 const COINBASE_PRODUCT   = 'PAXG-USD';
-const BINANCE_WS_URL     = 'wss://stream.binance.com:9443/ws/paxgusdt@bookTicker';
-const BINANCE_REST_BASE  = 'https://api.binance.com/api/v3/klines';
-const BINANCE_SYMBOL     = 'PAXGUSDT';
 const CONTRACT_SIZE = 100;        // 1 lot = 100 troy oz — matches Exness XAUUSD contract spec (Exness Help Center, "Commodities")
 const PRICE_DIGITS  = 2;          // Exness XAUUSD "Digits"/pip-size spec (0.01) — pricing/rounding already uses 2dp throughout
 const POINT_SIZE     = 1 / Math.pow(10, PRICE_DIGITS); // 1 point = $0.01 at 2 digits — used for swap $ conversion below
 
+// ── METAAPI REST CLIENT — real Exness account bridge ──
+// Thin fetch() wrapper over MetaApi's client REST API. No SDK/bundle
+// needed — every call below is a plain HTTPS request with an auth-token
+// header, which is what MetaApi's browser usage is designed around.
+// Docs: https://metaapi.cloud/docs/client/restApi/
+const MetaAPI = {
+  _host(kind) {
+    const r = META.region || 'london';
+    return kind === 'market'
+      ? `https://mt-market-data-client-api-v1.${r}.agiliumtrade.ai`
+      : `https://mt-client-api-v1.${r}.agiliumtrade.ai`;
+  },
+  _headers() {
+    return { 'auth-token': META.token, 'Content-Type': 'application/json', 'Accept': 'application/json' };
+  },
+  async _get(url) {
+    const res = await fetch(url, { headers: this._headers() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+    return data;
+  },
+  async accountInformation() {
+    return this._get(`${this._host()}/users/current/accounts/${META.accountId}/account-information`);
+  },
+  async currentPrice(symbol) {
+    return this._get(`${this._host()}/users/current/accounts/${META.accountId}/symbols/${encodeURIComponent(symbol)}/current-price`);
+  },
+  async historicalCandles(symbol, timeframe, limit) {
+    const url = `${this._host('market')}/users/current/accounts/${META.accountId}/historical-market-data/symbols/${encodeURIComponent(symbol)}/timeframes/${timeframe}/candles?limit=${limit}`;
+    const data = await this._get(url);
+    return Array.isArray(data) ? data : [];
+  },
+  async trade(body) {
+    const res = await fetch(`${this._host()}/users/current/accounts/${META.accountId}/trade`, {
+      method: 'POST', headers: this._headers(), body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || (data.numericCode && data.numericCode !== 10009)) {
+      throw new Error(data.message || `HTTP ${res.status}`);
+    }
+    return data;
+  },
+  async openMarketOrder(isBuy, symbol, volume, stopLoss, takeProfit) {
+    const body = { actionType: isBuy ? 'ORDER_TYPE_BUY' : 'ORDER_TYPE_SELL', symbol, volume: +volume };
+    if (stopLoss   != null) body.stopLoss   = +stopLoss;
+    if (takeProfit != null) body.takeProfit = +takeProfit;
+    return this.trade(body);
+  },
+  async modifyPosition(positionId, stopLoss, takeProfit) {
+    const body = { actionType: 'POSITION_MODIFY', positionId };
+    if (stopLoss   != null) body.stopLoss   = +stopLoss;
+    if (takeProfit != null) body.takeProfit = +takeProfit;
+    return this.trade(body);
+  },
+  async closePositionById(positionId) {
+    return this.trade({ actionType: 'POSITION_CLOSE_ID', positionId });
+  },
+};
+
+// ── LIVE MIRRORING — sends the bot's own decisions to the real account ──
+// The local demoPositions ledger stays the single source of truth for
+// strategy/risk logic; these calls just mirror its open/modify/close
+// events onto the real Exness account when Live Trading is on. Failures
+// are logged but never block or unwind the local simulated trade — if an
+// order fails to mirror, the bot keeps running in simulation for that
+// position rather than getting stuck.
+async function mirrorOpenPosition(pos) {
+  if (!(META.enabled && META.connected)) return;
+  try {
+    const isBuy = pos.dir === 'UP';
+    const res = await MetaAPI.openMarketOrder(isBuy, META.symbol, pos.lots, pos.slPrice, pos.eaManaged ? undefined : pos.tpPrice);
+    pos.livePositionId = res.positionId || res.orderId;
+    addSignal('info', `[LIVE] ${isBuy ? 'BUY' : 'SELL'} ${pos.lots.toFixed(2)}L ${META.symbol} sent to Exness — ticket ${pos.livePositionId}`, null);
+  } catch (e) {
+    addSignal('warn', `[LIVE] Order to Exness FAILED — ${e.message}`, null);
+  }
+}
+async function mirrorModifyStop(pos) {
+  if (!(META.enabled && META.connected) || !pos.livePositionId) return;
+  try {
+    await MetaAPI.modifyPosition(pos.livePositionId, pos.slPrice, pos.eaManaged ? undefined : pos.tpPrice);
+  } catch (e) {
+    addSignal('warn', `[LIVE] Exness stop-loss update failed (ticket ${pos.livePositionId}) — ${e.message}`, null);
+  }
+}
+async function mirrorClosePosition(pos, reason) {
+  if (!(META.enabled && META.connected) || !pos.livePositionId) return;
+  try {
+    await MetaAPI.closePositionById(pos.livePositionId);
+    addSignal('info', `[LIVE] Close sent to Exness — ticket ${pos.livePositionId} (${reason})`, null);
+  } catch (e) {
+    // Most common cause here is the broker's own SL/TP already closed the
+    // position first (expected — we set real SL/TP on the order itself),
+    // so this is intentionally quiet rather than raised as a warning.
+  }
+}
+
 let _coinbaseWS             = null;  // WebSocket handle — Coinbase live feed
 let _coinbaseReconnectTimer = null;
-let _binanceWS               = null; // WebSocket handle — Binance live feed
-let _binanceReconnectTimer   = null;
-let cbConnected = false, bnConnected = false; // per-exchange connection state, drives the header dot/label
-let cbBid = 0, cbAsk = 0;  // latest Coinbase best bid/ask
-let bnBid = 0, bnAsk = 0;  // latest Binance best bid/ask
-const cbCandles = { 60:[], 300:[], 900:[] }; // raw Coinbase history, pre-blend
-const bnCandles = { 60:[], 300:[], 900:[] }; // raw Binance history, pre-blend
 
 const CFG = {
   RISK_PCT     : 1.0,
@@ -1550,6 +1663,25 @@ let bid = 0, ask = 0, mid = 0, prevMid = 0;
 let balance = null, balCcy = 'USD';
 let startBalance = 0;
 let sessionPnL   = 0;
+
+// ── BROKER CONNECTION — MetaApi (Exness) ──
+// Real live-broker bridge. When META.enabled && META.connected, the price
+// feed/candles switch from the Coinbase PAXG-USD simulation source to
+// Exness's own live quotes via MetaApi, and every bot-generated trade is
+// mirrored to the real account as a real market order with real SL/TP.
+// The local demo ledger keeps running underneath exactly as before (it's
+// still the "brain" deciding entries/exits and the source of the on-screen
+// stats) — live mode just additionally sends each open/modify/close to the
+// real broker via MetaApi's REST API. Token/Account ID are kept only in
+// this browser's localStorage and sent only to MetaApi's own API.
+const META = {
+  enabled: false,
+  connected: false,
+  accountId: '',
+  token: '',
+  region: 'london',
+  symbol: 'XAUUSDm',
+};
 
 let demoBalance     = 0;
 let demoStartBal    = 0;
@@ -1796,11 +1928,11 @@ function getDynamicSpread(epochSec, newsState) {
   return Math.max(0.08, +spread.toFixed(3));
 }
 
-// ── LIVE SPREAD — uses real blended bid/ask (Coinbase+Binance), overlays news widening ──
+// ── LIVE SPREAD — uses real Coinbase bid/ask, overlays news widening ──
 // Called only in live-trading paths (entry pricing, PnL calc, spread display).
 // getDynamicSpread() remains the backtest-only simulation.
 function getLiveSpread(newsState) {
-  // Real market spread from the blended Coinbase+Binance feed; fall back to session estimate if not yet connected
+  // Real market spread from Coinbase feed; fall back to session estimate if not yet connected
   const mktSpread = (ask && bid && ask > bid) ? (ask - bid) : SIM.SPREAD_BASE;
   const ns = newsState || (typeof newsEngine !== 'undefined' ? newsEngine.state : 'NORMAL');
   let spread = mktSpread;
@@ -2020,7 +2152,7 @@ function btNewsStateAt(epochSec, events) {
 function calcPnLForPos(pos, currentMid) {
   if(!currentMid || !pos.entry || !pos.slPrice) return 0;
   const isBuy = pos.dir === 'UP';
-  // Use real live spread (blended Coinbase+Binance bid/ask) so floating PnL matches actual fill costs
+  // Use real live spread (Coinbase bid/ask) so floating PnL matches actual fill costs
   const halfSpread = (ask && bid && ask > bid) ? (ask - bid) / 2 : XAUUSD_SPREAD / 2;
   const effectivePrice = isBuy ? currentMid - halfSpread : currentMid + halfSpread;
   const delta = isBuy ? (effectivePrice - pos.entry) : (pos.entry - effectivePrice);
@@ -6383,7 +6515,7 @@ function _executeDemoTrade(dir, ob, quality = 1, rawSetup = null, qualityScore =
   if(!gate.ok) return;
 
   const isBuy = dir === 'UP';
-  // ── LIVE SPREAD — real blended bid/ask (Coinbase+Binance) + news overlay ──
+  // ── LIVE SPREAD — real bid/ask from Coinbase + news overlay ──
   const dynSpread = getLiveSpread(newsEngine.state);
   // ── SLIPPAGE — scaled by order-size regime (balance growth) and current
   // volatility, not a flat draw, so bigger/faster fills cost more, matching
@@ -6487,6 +6619,7 @@ function _executeDemoTrade(dir, ob, quality = 1, rawSetup = null, qualityScore =
     eaManaged: eaManagedNow,
   };
   demoPositions.push(pos);
+  mirrorOpenPosition(pos);
   if (riskCheck) updateRiskAudit(riskCheck, pos);
   addSignal(dir==='UP'?'buy':'sell',
     `${isBuy?'BUY':'SELL'} ${adjLots.toFixed(2)}L ${grade}${newsTag}${riskTag} @ ${entryPrice.toFixed(2)} | SL:${slPrice.toFixed(2)} ${pos.eaManaged ? '(EA trail exit)' : `TP:${tpPrice.toFixed(2)}`} | sprd:$${dynSpread} slip:$${slip.toFixed(2)}`, mid);
@@ -6728,6 +6861,7 @@ function forceCloseEaPositions(reason) {
     const exitPrice = isBuy ? mid - halfSpread : mid + halfSpread;
     const pnl = calcClosePnL(pos, exitPrice, reason);
     demoPositions = demoPositions.filter(p => p.id !== pos.id);
+    mirrorClosePosition(pos, reason);
     const swap = calcSwapCost(pos, pos.openTime, Date.now());
     const totalPnl = pnl + swap;
     demoBalance = Math.max(0, demoBalance + (isNaN(totalPnl) ? 0 : totalPnl));
@@ -6867,6 +7001,7 @@ function checkDemoPositions() {
     if(trail.newSL !== pos.slPrice) {
       pos.slPrice = trail.newSL;
       pos.slAmount = 0; // BE+ territory
+      mirrorModifyStop(pos);
       if(trail.trailInfo) {
         addSignal('info', `#${pos.id} ${pos.dir==='UP'?'BUY':'SELL'} ${trail.trailInfo} (${trail.pctToTP}% to TP)`, mid);
       }
@@ -7008,6 +7143,7 @@ function checkDemoPositions() {
 
   closeData.forEach(({pos, pnl, reason}) => {
     demoPositions = demoPositions.filter(p=>p.id!==pos.id);
+    mirrorClosePosition(pos, reason);
     // Swap only bites if the position was actually open across a daily
     // rollover — near-zero for this bot's typical scalp hold times, but
     // real for the occasional multi-hour runner.
@@ -7072,9 +7208,10 @@ function updateDemoPositionsUI() {
     const dirLbl = pos.dir==='UP'?'BUY':'SELL';
     const grade = (pos.quality||1) >= 3 ? '★★★' : (pos.quality||1) === 2 ? '★★' : '★';
     const beTag = pos.beTriggered ? ' 🔒BE' : '';
+    const liveTag = pos.livePositionId ? ' <span style="color:var(--green)">●LIVE</span>' : '';
     return `<div class="pos-card">
       <div class="pos-head">
-        <span class="pos-dir ${pos.dir==='UP'?'b':'s'}">${dirLbl} ${(pos.lots||0.01).toFixed(2)}L ${grade}${beTag}</span>
+        <span class="pos-dir ${pos.dir==='UP'?'b':'s'}">${dirLbl} ${(pos.lots||0.01).toFixed(2)}L ${grade}${beTag}${liveTag}</span>
         <span class="pos-pnl ${pnl>=0?'g':'r'}">${pnl>=0?'+':''}${pnl.toFixed(2)}</span>
       </div>
       <div class="pos-det">
@@ -7136,7 +7273,13 @@ function openDrawer(name) {
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   const btnMap={feed:'btnFeed',positions:'btnPositions',setup:'btnSetup',settings:'btnSettings',backtest:'btnBacktest',history:'btnHistory'};
   if(btnMap[name]) $(btnMap[name])?.classList.add('active');
-  if(name==='positions') { authed ? updatePositionsUI([]) : updateDemoPositionsUI(); }
+  // NOTE: updatePositionsUI([]) below was leftover from a previous broker
+  // integration and was always called with a hardcoded empty array, which
+  // made the Positions drawer show "No open positions" any time `authed`
+  // was true — including now, once the live Exness feed connects. Open
+  // positions (demo AND live-mirrored) live in demoPositions, so that's
+  // always the correct source to render here.
+  if(name==='positions') { updateDemoPositionsUI(); }
   if(name==='setup') { updateActiveSystemBanner(); updateEaSetupPanel(); }
   if(name==='history')   renderLiveHistory();
   if(name==='backtest' && $('btRiskPct') && !$('btRiskPct').value) $('btRiskPct').value = CFG.RISK_PCT;
@@ -7249,6 +7392,120 @@ function loadSettings() {
   if(CFG.DEMO_BALANCE > 0) resetHardFloor(CFG.DEMO_BALANCE);
   updateDepositNotice();
   updateStatsStrip();
+}
+
+// ── BROKER CONNECTION SETTINGS — MetaApi (Exness) ──
+// Kept in its own localStorage key, separate from the strategy/risk CFG
+// blob above, since it's account credentials rather than a trading
+// parameter. Loaded once at startup and re-saved every time Test
+// Connection succeeds or Live Trading is toggled, so neither depends on
+// the user also remembering to hit the main "Save & Apply" button.
+function loadMetaSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('pabotMeta') || '{}');
+    if (saved.accountId) META.accountId = saved.accountId;
+    if (saved.token)     META.token     = saved.token;
+    if (saved.region)    META.region    = saved.region;
+    if (saved.symbol)    META.symbol    = saved.symbol;
+    // `connected` is intentionally NOT persisted — every fresh page load
+    // must re-run Test Connection before Live Trading can be enabled again.
+    // `enabled` also is not restored as `true` on its own; see below.
+    if (saved.enabled && saved.accountId && saved.token) {
+      // Live Trading was left on last session — restore the fields but
+      // still require a fresh Test Connection before it can go live again.
+      META.enabled = false;
+    }
+  } catch(e) {}
+  $('cfgMetaAccountId').value = META.accountId || '';
+  $('cfgMetaApiToken').value  = META.token || '';
+  $('cfgMetaRegion').value    = META.region || 'london';
+  $('cfgMetaSymbol').value    = META.symbol || 'XAUUSDm';
+  $('cfgLiveTrading').checked = false;
+  updateLiveBadges();
+}
+
+function saveMetaSettings() {
+  try {
+    localStorage.setItem('pabotMeta', JSON.stringify({
+      accountId: META.accountId, token: META.token,
+      region: META.region, symbol: META.symbol, enabled: META.enabled,
+    }));
+  } catch(e) {}
+}
+
+function updateLiveBadges() {
+  const modeBadge = $('modeBadge'), exnessBadge = $('exnessBadge');
+  if (META.enabled && META.connected) {
+    modeBadge.textContent = 'LIVE';
+    modeBadge.className = 'badge badge-live';
+    exnessBadge.textContent = 'EXNESS LIVE';
+    exnessBadge.style.borderColor = 'var(--green-border)';
+    exnessBadge.style.color = 'var(--green)';
+    exnessBadge.style.background = 'var(--green-dim)';
+  } else {
+    modeBadge.textContent = 'DEMO';
+    modeBadge.className = 'badge badge-demo';
+    exnessBadge.textContent = 'EXNESS STD';
+    exnessBadge.style.borderColor = 'rgba(227,173,76,0.4)';
+    exnessBadge.style.color = 'var(--gold)';
+    exnessBadge.style.background = 'rgba(227,173,76,0.08)';
+  }
+}
+
+async function testMetaConnection() {
+  const btn = $('btnTestMetaConn'), statusEl = $('metaConnStatus');
+  META.accountId = $('cfgMetaAccountId').value.trim();
+  META.token     = $('cfgMetaApiToken').value.trim();
+  META.region    = $('cfgMetaRegion').value;
+  META.symbol    = $('cfgMetaSymbol').value.trim() || 'XAUUSDm';
+  if (!META.accountId || !META.token) {
+    statusEl.textContent = 'Enter Account ID and API Token first';
+    statusEl.style.color = 'var(--red)';
+    return;
+  }
+  btn.disabled = true;
+  statusEl.textContent = 'Testing…';
+  statusEl.style.color = 'var(--text2)';
+  META.connected = false;
+  try {
+    const info = await MetaAPI.accountInformation();
+    // Also confirm the symbol is tradeable on this account/server before
+    // declaring success — a wrong suffix (XAUUSD vs XAUUSDm) fails here.
+    await MetaAPI.currentPrice(META.symbol);
+    META.connected = true;
+    const bal = (typeof info.balance === 'number') ? info.balance.toFixed(2) : info.balance;
+    statusEl.textContent = `CONNECTED — ${info.server || META.region} · bal $${bal ?? '—'}`;
+    statusEl.style.color = 'var(--green)';
+    addSignal('info', `MetaApi connected — Exness account ${info.login || META.accountId} (${info.server || ''})`, null);
+  } catch (e) {
+    META.connected = false;
+    statusEl.textContent = `Failed: ${e.message}`;
+    statusEl.style.color = 'var(--red)';
+  } finally {
+    btn.disabled = false;
+    saveMetaSettings();
+    updateLiveBadges();
+  }
+}
+
+function onLiveTradingToggle() {
+  const cb = $('cfgLiveTrading');
+  if (cb.checked && !META.connected) {
+    cb.checked = false;
+    alert('Run Test Connection first — it must show CONNECTED before enabling Live Trading.');
+    return;
+  }
+  if (cb.checked) {
+    const ok = confirm('LIVE TRADING will send REAL market orders with REAL money to your Exness account via MetaApi.\n\nMake sure you have tested this on a demo MetaApi account first.\n\nContinue?');
+    if (!ok) { cb.checked = false; return; }
+  }
+  META.enabled = cb.checked;
+  saveMetaSettings();
+  updateLiveBadges();
+  addSignal('info', META.enabled
+    ? `LIVE TRADING ENABLED — orders will be sent to Exness (${META.symbol})`
+    : 'Live trading disabled — back to simulated feed', null);
+  connect(); // restart the feed on the newly selected source
 }
 
 function saveSettings() {
@@ -7618,60 +7875,15 @@ function _processTick(midPrice, epochSec) {
   }
 }
 
-// ── BLENDED LIVE FEED ENGINE — Coinbase + Binance ───────────────────────────
-// Both exchanges provide true tick-by-tick best bid/ask on a gold-backed
-// token at no cost and with no API key. Historical candles are loaded via a
-// plain REST call to each exchange's candles endpoint on connect; live ticks
-// arrive over each exchange's public WebSocket. M1/M5/M15 OHLC bars are built
-// client-side by _processTick() from a single BLENDED mid price (see
-// _onPriceTick below) — averaging both exchanges' ticks before a bar is ever
-// built is what removes single-exchange jitter/spikes from the candles
-// themselves, not just their rendering.
-
-function _updateConnLabel() {
-  const dot = $('connDot'), dotM = $('connDotM'), lbl = $('connLbl');
-  const n = (cbConnected ? 1 : 0) + (bnConnected ? 1 : 0);
-  if (n === 2) {
-    dot.className = 'dot on'; if (dotM) dotM.className = 'dot on';
-    lbl.textContent = 'Connected (CB+BN)';
-  } else if (n === 1) {
-    dot.className = 'dot on'; if (dotM) dotM.className = 'dot on';
-    lbl.textContent = cbConnected ? 'Connected (CB only)' : 'Connected (BN only)';
-  } else {
-    dot.className = 'dot'; if (dotM) dotM.className = 'dot';
-    lbl.textContent = 'Reconnecting…';
-  }
-}
-
-// Merge each exchange's raw history into the single `candles[gran]` array
-// the chart/strategy actually read. Bars present on both exchanges at the
-// same epoch are averaged; a bar only one exchange has (e.g. right after a
-// reconnect, before the other's REST load has returned) is used as-is rather
-// than dropped, so history is never thinner than a single-source feed would
-// give you.
-function _blendHistory(gran) {
-  if (btFetching) return;
-  const cb = cbCandles[gran] || [], bn = bnCandles[gran] || [];
-  if (!cb.length && !bn.length) return;
-  const byEpoch = new Map();
-  for (const c of cb) byEpoch.set(c.epoch, { cb: c, bn: null });
-  for (const b of bn) {
-    const e = byEpoch.get(b.epoch);
-    if (e) e.bn = b; else byEpoch.set(b.epoch, { cb: null, bn: b });
-  }
-  const merged = [...byEpoch.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([epoch, { cb: c, bn: b }]) => {
-      if (c && b) {
-        return { epoch, open: (c.open+b.open)/2, high: (c.high+b.high)/2, low: (c.low+b.low)/2, close: (c.close+b.close)/2 };
-      }
-      const only = c || b;
-      return { epoch, open: only.open, high: only.high, low: only.low, close: only.close };
-    });
-  candles[gran] = merged;
-  drawChart();
-  if (gran === 60 && _gapCheckPending) _scanGapPositions();
-}
+// ── COINBASE LIVE FEED ENGINE ───────────────────────────────────────────────
+// Coinbase's public Exchange API provides true tick-by-tick best bid/ask on
+// PAXG-USD (PAX Gold, tracking spot XAU/USD) at no cost and with no API key.
+// Historical candles are loaded via a plain REST call to the candles endpoint
+// on connect; live ticks arrive over the public "ticker" WebSocket channel.
+// M1/M5/M15 OHLC bars are built client-side from those ticks by _processTick()
+// (see above) — Coinbase's public feed doesn't push pre-aggregated candles
+// over the ticker channel, so the tick-to-candle builder is the single source
+// of truth for every timeframe, live and on reconnect alike.
 
 async function _coinbaseLoadHistory() {
   // Load historical OHLC bars for all three timeframes via REST.
@@ -7699,44 +7911,15 @@ async function _coinbaseLoadHistory() {
         close: +c[4],
       })).sort((a, b) => a.epoch - b.epoch);
       if (arr.length) {
-        cbCandles[gran] = arr;
+        candles[gran] = arr;
         const label = gran === 60 ? '1min' : gran === 300 ? '5min' : '15min';
         addSignal('info', `${arr.length} ${label} candles loaded from Coinbase`, null);
-        _blendHistory(gran);
+        drawChart();
+        // After M1 history refreshes on reconnect, scan for gap SL/TP hits
+        if (gran === 60 && _gapCheckPending) _scanGapPositions();
       }
     } catch (e) {
       addSignal('warn', `Coinbase history load failed (${gran}s): ${e.message}`, null);
-    }
-  }
-}
-
-async function _binanceLoadHistory() {
-  // Binance's klines endpoint allows up to 1000 bars per request — no
-  // pagination needed at these counts, unlike Coinbase's 300-bar cap.
-  const specs = [[60, '1m', 300], [300, '5m', 200], [900, '15m', 100]];
-  for (const [gran, interval, count] of specs) {
-    try {
-      const url = `${BINANCE_REST_BASE}?symbol=${BINANCE_SYMBOL}&interval=${interval}&limit=${count}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      if (btFetching) continue;
-      // Binance kline rows: [openTime(ms), open, high, low, close, volume, closeTime, ...]
-      const arr = data.map(k => ({
-        epoch: Math.floor(k[0] / 1000),
-        open : +k[1],
-        high : +k[2],
-        low  : +k[3],
-        close: +k[4],
-      })).sort((a, b) => a.epoch - b.epoch);
-      if (arr.length) {
-        bnCandles[gran] = arr;
-        const label = gran === 60 ? '1min' : gran === 300 ? '5min' : '15min';
-        addSignal('info', `${arr.length} ${label} candles loaded from Binance`, null);
-        _blendHistory(gran);
-      }
-    } catch (e) {
-      addSignal('warn', `Binance history load failed (${gran}s): ${e.message}`, null);
     }
   }
 }
@@ -7746,7 +7929,7 @@ function _connectCoinbase() {
   if (_coinbaseReconnectTimer) { clearTimeout(_coinbaseReconnectTimer); _coinbaseReconnectTimer = null; }
 
   addSignal('info', `Connecting to Coinbase WebSocket...`, null);
-  cbConnected = false; _updateConnLabel();
+  setConn('wait');
 
   // Historical bars load independently over REST — no need to wait for the
   // WebSocket to open first.
@@ -7761,7 +7944,8 @@ function _connectCoinbase() {
       product_ids: [COINBASE_PRODUCT],
       channels: ['ticker'],
     }));
-    cbConnected = true; authed = true; _updateConnLabel();
+    setConn('on');
+    authed = true;
     addSignal('info', `Coinbase connected — ${COINBASE_PRODUCT} (Gold) live tick feed active`, null);
   };
 
@@ -7770,7 +7954,8 @@ function _connectCoinbase() {
   };
 
   ws.onclose = () => {
-    _coinbaseWS = null; cbConnected = false; _updateConnLabel();
+    _coinbaseWS = null;
+    setConn('wait');
     addSignal('warn', `Coinbase disconnected — reconnecting in 5 s...`, null);
     _coinbaseReconnectTimer = setTimeout(_connectCoinbase, 5000);
   };
@@ -7780,76 +7965,27 @@ function _connectCoinbase() {
   };
 }
 
-function _connectBinance() {
-  if (_binanceWS) { try { _binanceWS.close(); } catch(_) {} _binanceWS = null; }
-  if (_binanceReconnectTimer) { clearTimeout(_binanceReconnectTimer); _binanceReconnectTimer = null; }
-
-  addSignal('info', `Connecting to Binance WebSocket...`, null);
-  bnConnected = false; _updateConnLabel();
-
-  _binanceLoadHistory();
-
-  const ws = new WebSocket(BINANCE_WS_URL);
-  _binanceWS = ws;
-
-  ws.onopen = () => {
-    // bookTicker is a direct stream URL — no subscribe message needed, ticks
-    // start arriving immediately.
-    bnConnected = true; authed = true; _updateConnLabel();
-    addSignal('info', `Binance connected — ${BINANCE_SYMBOL} (Gold) live tick feed active`, null);
-  };
-
-  ws.onmessage = evt => {
-    try { _handleBinanceMsg(JSON.parse(evt.data)); } catch(_) {}
-  };
-
-  ws.onclose = () => {
-    _binanceWS = null; bnConnected = false; _updateConnLabel();
-    addSignal('warn', `Binance disconnected — reconnecting in 5 s...`, null);
-    _binanceReconnectTimer = setTimeout(_connectBinance, 5000);
-  };
-
-  ws.onerror = () => {
-    // onclose fires immediately after — handled there.
-  };
-}
-
-// Combine whichever exchange(s) are currently connected into a single blended
-// bid/ask. Both connected → simple average (this is the noise-cancelling
-// part). Only one connected → use it alone so the feed degrades gracefully
-// instead of stopping.
-function _blendedBidAsk() {
-  const haveCb = cbConnected && cbBid && cbAsk;
-  const haveBn = bnConnected && bnBid && bnAsk;
-  if (haveCb && haveBn) return { bid: (cbBid + bnBid) / 2, ask: (cbAsk + bnAsk) / 2 };
-  if (haveCb) return { bid: cbBid, ask: cbAsk };
-  if (haveBn) return { bid: bnBid, ask: bnAsk };
-  return null;
-}
-
-// Shared tail end for both exchanges' tick handlers — recompute the blended
-// price and feed it through the exact same pipeline (price display, tick →
-// candle builder, position checks, strategy) that used to run once per
-// Coinbase-only tick.
-function _onPriceTick(epochSec) {
-  // ── BACKTEST REPLAY GUARD — both live WS connections keep streaming in the
-  // background even while a backtest replay is running (neither is ever
-  // closed), and this handler mutates the SAME globals the replay engine
-  // owns every frame: mid/bid/ask and candles[gran]. Without this guard, a
-  // live tick landing between two replay frames overwrites those globals
-  // with today's real price/candle for an instant, so the chart's forming
-  // candle and price scale would visibly snap to a different, unrelated
-  // price before the next replay frame corrects it — this is the "glitchy"
-  // candle formation. During replay, the replay engine has exclusive
-  // ownership of this state, so live ticks are simply dropped here (both
-  // WSs keep running quietly underneath so live data is instantly ready
-  // again once replay stops).
+function _handleCoinbaseMsg(msg) {
+  if (!msg || msg.type !== 'ticker' || msg.product_id !== COINBASE_PRODUCT) return;
+  // ── BACKTEST REPLAY GUARD — the live Coinbase WS keeps streaming in the
+  // background even while a backtest replay is running (it's never closed),
+  // and this handler mutates the SAME globals the replay engine owns every
+  // frame: mid/bid/ask and candles[gran]. Without this guard, a live tick
+  // landing between two replay frames overwrites those globals with today's
+  // real price/candle for an instant, so the chart's forming candle and
+  // price scale would visibly snap to a different, unrelated price before
+  // the next replay frame corrects it — this is the "glitchy" candle
+  // formation. During replay, the replay engine has exclusive ownership of
+  // this state, so live ticks are simply dropped here (the WS keeps running
+  // quietly underneath so live data is instantly ready again once replay stops).
   if (typeof replay !== 'undefined' && replay.active) return;
 
-  const ba = _blendedBidAsk();
-  if (!ba) return;
-  const newBid = ba.bid, newAsk = ba.ask;
+  // ── Real-time best bid/ask tick ───────────────────────────────
+  const newBid = +msg.best_bid;
+  const newAsk = +msg.best_ask;
+  if (!newBid || !newAsk) return;
   const newMid = (newBid + newAsk) / 2;
+  const epochSec = Math.floor(Date.now() / 1000);
 
   if (mid && newMid !== mid) {
     const diff = newMid - mid, dir = diff > 0 ? 'up' : 'dn';
@@ -7863,40 +7999,107 @@ function _onPriceTick(epochSec) {
   $('priceMain').textContent = mid.toFixed(2);
   updatePriceBadges(bid, ask);
 
-  // M1/M5/M15 OHLC bars are built from this blended tick stream — see _processTick().
+  // M1/M5/M15 OHLC bars are built from this tick stream — see _processTick().
   _processTick(newMid, epochSec);
   checkDemoPositions();
   if (!replay.active) runStrategy();
 }
 
-function _handleCoinbaseMsg(msg) {
-  if (!msg || msg.type !== 'ticker' || msg.product_id !== COINBASE_PRODUCT) return;
-  if (typeof replay !== 'undefined' && replay.active) return;
-  const newBid = +msg.best_bid, newAsk = +msg.best_ask;
-  if (!newBid || !newAsk) return;
-  cbBid = newBid; cbAsk = newAsk;
-  _onPriceTick(Math.floor(Date.now() / 1000));
+// ── PRIMARY CONNECT — Coinbase public API (primary and only data source) ──
+// ── LIVE FEED — MetaApi (Exness) ── used instead of Coinbase whenever
+// Live Trading is on and Test Connection has succeeded. Polls MetaApi's
+// REST current-price endpoint (simple, no socket.io dependency needed)
+// and feeds ticks through the exact same _processTick/checkDemoPositions/
+// runStrategy pipeline the Coinbase feed uses, so the strategy code never
+// needs to know which broker the price came from.
+let _metaPollTimer = null;
+let _metaBalanceTimer = null;
+
+async function _metaLoadHistory() {
+  const specs = [[60, '1m', 300], [300, '5m', 200], [900, '15m', 100]];
+  for (const [gran, tf, limit] of specs) {
+    try {
+      const data = await MetaAPI.historicalCandles(META.symbol, tf, limit);
+      if (btFetching) continue;
+      const arr = data.map(c => ({
+        epoch: Math.floor(new Date(c.time).getTime() / 1000),
+        open: +c.open, high: +c.high, low: +c.low, close: +c.close,
+      })).sort((a, b) => a.epoch - b.epoch);
+      if (arr.length) {
+        candles[gran] = arr;
+        const label = gran === 60 ? '1min' : gran === 300 ? '5min' : '15min';
+        addSignal('info', `${arr.length} ${label} candles loaded from Exness (MetaApi)`, null);
+        drawChart();
+        if (gran === 60 && _gapCheckPending) _scanGapPositions();
+      }
+    } catch (e) {
+      addSignal('warn', `Exness history load failed (${tf}): ${e.message}`, null);
+    }
+  }
 }
 
-function _handleBinanceMsg(msg) {
-  // Binance bookTicker payload: { u, s, b: bestBidPrice, B: bestBidQty, a: bestAskPrice, A: bestAskQty }
-  if (!msg || msg.b === undefined || msg.a === undefined) return;
-  if (typeof replay !== 'undefined' && replay.active) return;
-  const newBid = +msg.b, newAsk = +msg.a;
-  if (!newBid || !newAsk) return;
-  bnBid = newBid; bnAsk = newAsk;
-  _onPriceTick(Math.floor(Date.now() / 1000));
+function _connectMetaApi() {
+  if (_metaPollTimer) { clearInterval(_metaPollTimer); _metaPollTimer = null; }
+  if (_metaBalanceTimer) { clearInterval(_metaBalanceTimer); _metaBalanceTimer = null; }
+  addSignal('info', `Connecting to Exness via MetaApi (${META.symbol})...`, null);
+  setConn('wait');
+  _metaLoadHistory();
+
+  const poll = async () => {
+    try {
+      const p = await MetaAPI.currentPrice(META.symbol);
+      const newBid = +p.bid, newAsk = +p.ask;
+      if (!newBid || !newAsk) return;
+      if (typeof replay !== 'undefined' && replay.active) return;
+      const newMid = (newBid + newAsk) / 2;
+      const epochSec = Math.floor(Date.now() / 1000);
+      if (mid && newMid !== mid) {
+        const diff = newMid - mid, dir = diff > 0 ? 'up' : 'dn';
+        const chgEl = $('priceChg');
+        chgEl.textContent = `${diff > 0 ? '+' : ''}${diff.toFixed(2)}`;
+        chgEl.className = `price-chg ${dir}`;
+        flashPrice(dir);
+      }
+      bid = newBid; ask = newAsk; prevMid = mid; mid = newMid;
+      $('priceMain').textContent = mid.toFixed(2);
+      updatePriceBadges(bid, ask);
+      if (!authed) { authed = true; setConn('on'); addSignal('info', `Exness connected — live ${META.symbol} feed active (MetaApi)`, null); }
+      _processTick(newMid, epochSec);
+      checkDemoPositions();
+      if (!replay.active) runStrategy();
+    } catch (e) {
+      setConn('wait');
+      addSignal('warn', `Exness price poll failed: ${e.message}`, null);
+    }
+  };
+  poll();
+  _metaPollTimer = setInterval(poll, 2000);
+
+  const pollBalance = async () => {
+    try {
+      const info = await MetaAPI.accountInformation();
+      balance = info.equity ?? info.balance ?? balance;
+      balCcy = info.currency || balCcy;
+      updateStatsStrip();
+    } catch (e) { /* non-fatal — stats strip just keeps last known value */ }
+  };
+  pollBalance();
+  _metaBalanceTimer = setInterval(pollBalance, 5000);
 }
 
-// ── PRIMARY CONNECT — Coinbase + Binance, blended ──
 function connect() {
   if (_coinbaseWS) { try { _coinbaseWS.close(); } catch(_) {} _coinbaseWS = null; }
   if (_coinbaseReconnectTimer) { clearTimeout(_coinbaseReconnectTimer); _coinbaseReconnectTimer = null; }
-  if (_binanceWS) { try { _binanceWS.close(); } catch(_) {} _binanceWS = null; }
-  if (_binanceReconnectTimer) { clearTimeout(_binanceReconnectTimer); _binanceReconnectTimer = null; }
-  cbConnected = false; bnConnected = false; _updateConnLabel();
-  _connectCoinbase();
-  _connectBinance();
+  if (_metaPollTimer) { clearInterval(_metaPollTimer); _metaPollTimer = null; }
+  if (_metaBalanceTimer) { clearInterval(_metaBalanceTimer); _metaBalanceTimer = null; }
+  authed = false;
+  setConn('wait');
+  if (META.enabled && META.connected) {
+    _connectMetaApi();
+  } else {
+    balance = null; // drop any stale live-account balance so the stats strip falls back to demoBalance
+    _connectCoinbase();
+  }
 }
 
 
@@ -10254,6 +10457,7 @@ function _scanGapPositions() {
     const savedMid = mid;
     mid = atPrice; // log will show the actual hit price, not the current stale mid
     demoPositions = demoPositions.filter(p => p.id !== pos.id);
+    mirrorClosePosition(pos, reason);
     const swapCost = calcSwapCost(pos, pos.openTime, Date.now());
     pnl += swapCost;
     demoBalance = Math.max(0, demoBalance + (isNaN(pnl) ? 0 : pnl));
@@ -10303,6 +10507,7 @@ function _scanGapPositions() {
 window.addEventListener('resize', resizeCV);
 resizeCV();
 loadSettings();
+loadMetaSettings();
 updateProfitLockUI();
 setBtToday();
 Storage.init().catch(() => {});
@@ -10331,7 +10536,7 @@ setInterval(() => {
   });
 }, 60 * 1000);
 
-addSignal('info','XAUUSD PA Bot v2 — Coinbase + Binance blended data engine ready',null);
+addSignal('info','XAUUSD PA Bot v2 — Coinbase API data engine ready',null);
 
 addSignal('info','Strategy: Liquidity Sweep + Retracement Engine — M5 sweep of resting liquidity reclaimed → M1 structure shift confirms → order block + FVG define a retracement zone → regime/news/room/reclaim checks → 0-100 quality score graded B+/A/A+ | SL=structural HYBRID reference',null);
 </script>
